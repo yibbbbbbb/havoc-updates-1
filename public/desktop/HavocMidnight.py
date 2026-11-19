@@ -625,7 +625,10 @@ class MenuAudio:
                 while (cue := self._events.get()) is not None:
                     if isinstance(cue, Path):
                         try:
-                            mixer.music.load(str(cue))
+                            # One archived .wav is ID3-tagged MP3 audio; SDL otherwise selects the WAV decoder.
+                            with cue.open("rb") as source:
+                                format_hint = "mp3" if source.read(3) == b"ID3" else "wav"
+                            mixer.music.load(str(cue), format_hint)
                             clip_loaded = True
                             mixer.music.set_volume(self._volume / 100)
                             mixer.music.play()
@@ -1974,6 +1977,7 @@ def workspace(panel, now, notice=None):
             panel._footer()
         imgui.end_child()
         b_body = V(b_body.x, b_body.y - footer_h - 3 * z)
+        page = panel.section
     if private and page == "Appearance":
         tab_h = imgui.get_frame_height() + 7 * z
         if narrow:
@@ -2341,16 +2345,31 @@ OPTION_OWNER = {
 }
 
 def organize_controls(schema):
-    roots = {(item["section"], item["name"]): item for item in schema}
+    items = [dict(item, name=item.get("name") or pretty_key(item["key"]), section=nav.section_for_item(item))
+             for item in schema if item["key"] not in nav.HIDDEN_KEYS]
+    roots = {(item["section"], item["name"]): item for item in items}
+    switches = {(item["section"], item["key"]): item for item in items if item["type"] == "bool"}
     children = {}
     attached = set()
-    for item in schema:
-        parent = roots.get((item["section"], OPTION_OWNER.get(item["name"])))
+    for item in items:
+        page, key = item["section"], item["key"]
+        parent = switches.get((page, item.get("target")))
+        if parent is None:
+            parent = roots.get((page, OPTION_OWNER.get(item["name"])))
+        if parent is None and item["type"] == "number":
+            # Bobgui gives the most specific switch precedence for unowned sliders.
+            candidates = []
+            for (section, switch), owner in switches.items():
+                stem = switch.removesuffix("_ENABLED")
+                if section == page and (key == stem or key.startswith(stem + "_")):
+                    candidates.append((len(stem), owner))
+            if candidates:
+                parent = max(candidates, key=lambda pair: pair[0])[1]
         if parent is not None:
             children.setdefault(parent["key"], []).append(item)
-            attached.add(item["key"])
+            attached.add(key)
     groups = []
-    for item in schema:
+    for item in items:
         if item["key"] in attached:
             continue
         if item["type"] == "number" and not item.get("options"):
@@ -2358,6 +2377,11 @@ def organize_controls(schema):
         else:
             groups.append((item, children.get(item["key"], [])))
     return groups
+
+def control_matches(item, words):
+    text = " ".join((item.get("name") or pretty_key(item["key"]), item["section"], item["key"])).casefold()
+    searchable = text + " " + text.replace("_", " ") + " " + MIDNIGHT_STORAGE_KEYS.get(item["key"], "")
+    return all(word in searchable for word in words)
 
 def visible_groups(groups, values, page, query, favorites, mode=None):
     words = query.casefold().split()
@@ -2368,14 +2392,14 @@ def visible_groups(groups, values, page, query, favorites, mode=None):
         if page == "Favorites":
             visible = any(item["key"] in favorites for item in members)
         else:
-            visible = page in ("All Mods", "Enabled Mods") or page == category
+            visible = page in ("All Mods", "Search Results", "Enabled Mods") or page == category
         if not visible:
             continue
-        if page == "Enabled Mods" and mode is None and not any(
+        if page == "Enabled Mods" and not any(
             item["type"] == "bool" and values.get(item["key"], item["value"]) for item in members
         ):
             continue
-        if mode == "Enabled" and not (
+        if mode == "Enabled" and page != "Enabled Mods" and not (
             primary and primary["type"] == "bool" and values.get(primary["key"], primary["value"])
         ):
             continue
@@ -2385,15 +2409,12 @@ def visible_groups(groups, values, page, query, favorites, mode=None):
                 continue
             options = [item for item in options if item in changed]
             members = ([primary] if primary else []) + options
-        if not words or any(
-            all(word in (item["name"] + " " + category + " " + item["key"]).casefold() for word in words)
-            for item in members
-        ):
+        if not words or any(control_matches(item, words) for item in members):
             result.append((primary, options))
     return result
 
 
-DESKTOP_RELEASE = "2026.11.26"
+DESKTOP_RELEASE = "2026.11.27"
 
 PAGES_ORIGIN = "https://havoc-midnight-preview.pages.dev"
 
@@ -2401,7 +2422,8 @@ DESKTOP_REPO = "https://raw.githubusercontent.com/yibbbbbbb/havoc-updates-1"
 
 RELEASE_BYTES = 8 * 1024 * 1024
 
-TRUSTED_BACKUPS = {'1bf1f5a8fa870aac2241f5d98f117598fc0184fb241c27954de93d4b8db534d9': '2026.11.21',
+TRUSTED_BACKUPS = {'eb8a4fcb4030b3c12c8437779dfb23b309d646e3feb6c3219c227a334aa215e8': '2026.11.26',
+                   '1bf1f5a8fa870aac2241f5d98f117598fc0184fb241c27954de93d4b8db534d9': '2026.11.21',
  '32d809bf673aa831017f842e2eb47f6b0df18d81756e29d66f9e2302269bd351': '2026.11.22',
  '746de88dcb7e1825dabb32c9b795c18a317ba1ab140af1396c73a50580def42a': '2026.11.19',
  '95f4b57201d0459085fb0f187d816dfa1149cea2516dfbb5c55389b3809a7cff': '2026.11.20',
@@ -3343,91 +3365,232 @@ def page_filter(panel):
     imgui.spacing()
 
 
+# Each row keeps Midnight’s saved key beside bobgui’s corresponding profile key.
 CATALOG = (
-    ('hb187fb', 'Slow Monsters', 'Game Mods', False, None),
-    ('h11ef52', 'Monster Speed', 'Game Mods', 0.02, (0, 1)),
-    ('h900636', 'Tag Freeze', 'Game Mods', False, None),
-    ('h5ed5df', 'Hand Tap Volume', 'Game Mods', 0.1, (0, 100)),
-    ('h3bbf7b', 'Set Tag Cooldown', 'Game Mods', False, None),
-    ('h0471d7', 'Tag Cooldown', 'Game Mods', 1.0, (0, 10)),
-    ('h535f7a', 'Set Infected Threshold', 'Game Mods', False, None),
-    ('he9baed', 'Infected Threshold', 'Game Mods', 4, (1, 10)),
-    ('h29ba51', 'Time Scale', 'Game Mods', False, None),
-    ('h166bce', 'Game Speed', 'Game Mods', 1.0, (0.25, 3)),
-    ('h242d67', 'Jump Multiplier', 'Movement', 1.1, (1, 20)),
-    ('h772320', 'Slide Control', 'Movement', False, None),
-    ('hfc037d', 'Slide Amount', 'Movement', 1.0, (0, 2)),
-    ('h3650b5', 'Low Gravity', 'Movement', False, None),
-    ('hbf8366', 'Zero Gravity', 'Movement', False, None),
-    ('h7a0d0e', 'Custom Turn Speed', 'Movement', False, None),
-    ('h6c9186', 'Turn Speed', 'Movement', 360, (90, 720)),
-    ('hc20047', 'Force Rain', 'Day / Night', False, None),
-    ('h8ca1ac', 'Use Custom FOV', 'Visuals', False, None),
-    ('hbd8e24', 'Freecam FOV', 'Visuals', 90, (60, 120)),
-    ('hc6763f', 'Bunny Hop', 'Movement', False, None),
-    ('he3005b', 'Water Off', 'Movement', False, None),
-    ('hab9e07', 'Noclip', 'Movement', False, None),
-    ('h2c632b', 'Platforms', 'Movement', False, None),
-    ('ha7091e', 'Fly (B toggles flight)', 'Movement', False, None),
-    ('h6a8280', 'Fly Speed', 'Movement', 10, (1, 60)),
-    ('h7c64f0', 'Freecam', 'Visuals', False, None),
-    ('h003b4d', 'Spaz Monsters', 'Game Mods', False, None),
-    ('h630d2b', 'Loud Boards', 'Detected', False, None),
-    ('hb11fe3', 'Tap Sound ID', 'Detected', 84, (0, 128)),
-    ('h529cd1', 'Slow Everyone', 'Detected', False, None),
-    ('he63c1f', 'Vibrate Everyone', 'Detected', False, None),
-    ('hb607fe', 'Projectile Rain', 'Detected', False, None),
-    ('h603ab2', 'Impact Spam', 'Detected', False, None),
-    ('hbb9928', 'Set Master Client', 'Detected', False, None),
-    ('he17165', 'Destroy All', 'Detected', False, None),
-    ('hff1e08', 'Lag All Players', 'Detected', False, None),
-    ('hcd35ff', 'Name Tags', 'Detected', False, None),
-    ('hf9bf19', 'Dump Tag Classes', 'Debug', False, None),
-    ('hc5e564', 'Tracers', 'Visuals', False, None),
-    ('h919d60', 'Box ESP', 'Visuals', False, None),
-    ('h93505b', 'Rig Gun (view)', 'Rig', False, None),
-    ('hdf4d57', 'Grab Rig', 'Rig', False, None),
-    ('h18b7d1', 'Spaz Rig', 'Rig', False, None),
-    ('h4c773a', 'Freeze Rig', 'Rig', False, None),
-    ('ha33a96', 'Paralyze', 'Rig', False, None),
-    ('h130eb1', 'Chicken Rig', 'Rig', False, None),
-    ('h33680b', 'Amputate', 'Rig', False, None),
-    ('h185276', 'Decapitate', 'Rig', False, None),
-    ('h7a01f6', 'Floating Head', 'Rig', False, None),
-    ('ha8c2ed', 'Laggy Rig', 'Rig', False, None),
-    ('h720c2b', 'Update Rig', 'Rig', False, None),
-    ('h4ad556', 'Show In-Game Menu', 'On-Screen Menu', False, None),
-    ('haf8683', 'Hand Lag', 'Hand Lag', False, None),
-    ('h25db57', 'Hand Lag Amount', 'Hand Lag', 0.7, (0, 1)),
-    ('h866fe3', 'Tag Height', 'Detected', 0.55, (0, 2)),
-    ('h793faf', 'Tag Size', 'Detected', 0.004, (0.001, 0.02)),
-    ('hcdcf84', 'Show My FPS', 'Detected', True, None),
-    ('h1a0a31', 'Gui Temp Menu (in-VR)', 'On-Screen Menu', False, None),
-    ('hc17916', 'Physical Menu (hold Y)', 'On-Screen Menu', False, None),
-    ('h65a00e', 'Physical Menu On Right Hand', 'On-Screen Menu', False, None),
-    ('h674dc0', 'Physical Menu Size', 'On-Screen Menu', 1.15, (0.15, 2.0)),
-    ('h58c0c4', 'Physical Menu Height', 'On-Screen Menu', 0.26, (0, 1.0)),
-    ('h47d5ae', 'Physical Menu Text Size', 'On-Screen Menu', 1.0, (0.2, 5.0)),
-    ('h59eb98', 'Menu Width', 'On-Screen Menu', 460, (0, 500)),
-    ('hb6c1ff', 'Menu Height', 'On-Screen Menu', 360, (0, 500)),
-    ('hee67a6', 'FPS Box Width', 'On-Screen Menu', 210, (0, 500)),
-    ('h554510', 'FPS Box Height', 'On-Screen Menu', 300, (0, 500)),
+    ('hb187fb', 'MONSTERS_ENABLED', 'Slow Monsters', 'Game Mods', False, None),
+    ('h11ef52', 'MONSTER_SPEED', 'Monster Speed', 'Game Mods', 0.02, (0, 1)),
+    ('h900636', 'TAG_FREEZE', 'Tag Freeze', 'Game Mods', False, None),
+    ('h5ed5df', 'TAP_VOLUME', 'Hand Tap Volume', 'Game Mods', 0.1, (0, 100)),
+    ('h3bbf7b', 'TAG_COOLDOWN_ENABLED', 'Set Tag Cooldown', 'Game Mods', False, None),
+    ('h0471d7', 'TAG_COOLDOWN', 'Tag Cooldown', 'Game Mods', 1.0, (0, 10)),
+    ('h535f7a', 'INFECTED_THRESHOLD_ENABLED', 'Set Infected Threshold', 'Game Mods', False, None),
+    ('he9baed', 'INFECTED_THRESHOLD', 'Infected Threshold', 'Game Mods', 4, (1, 10)),
+    ('h29ba51', 'TIME_SCALE_ENABLED', 'Time Scale', 'Game Mods', False, None),
+    ('h166bce', 'TIME_SCALE', 'Game Speed', 'Game Mods', 1.0, (0.25, 3)),
+    ('h242d67', 'JUMP_MULTIPLIER', 'Jump Multiplier', 'Movement', 1.1, (1, 20)),
+    ('h772320', 'SLIDE_CONTROL_ENABLED', 'Slide Control', 'Movement', False, None),
+    ('hfc037d', 'SLIDE_CONTROL', 'Slide Amount', 'Movement', 1.0, (0, 2)),
+    ('h3650b5', 'LOW_GRAVITY_ENABLED', 'Low Gravity', 'Movement', False, None),
+    ('hbf8366', 'ZERO_GRAVITY_ENABLED', 'Zero Gravity', 'Movement', False, None),
+    ('h7a0d0e', 'TURN_SPEED_ENABLED', 'Custom Turn Speed', 'Movement', False, None),
+    ('h6c9186', 'TURN_SPEED', 'Turn Speed', 'Movement', 360, (90, 720)),
+    ('hc20047', 'FORCE_RAIN', 'Force Rain', 'Day / Night', False, None),
+    ('h8ca1ac', 'CAMERA_FOV_ENABLED', 'Use Custom FOV', 'Visuals', False, None),
+    ('hbd8e24', 'CAMERA_FOV', 'Freecam FOV', 'Visuals', 90, (60, 120)),
+    ('hc6763f', 'BUNNY_HOP', 'Bunny Hop', 'Movement', False, None),
+    ('he3005b', 'DISABLE_WATER', 'Water Off', 'Movement', False, None),
+    ('hab9e07', 'NOCLIP', 'Noclip', 'Movement', False, None),
+    ('h2c632b', 'PLATFORMS', 'Platforms', 'Movement', False, None),
+    ('ha7091e', 'FLY_ENABLED', 'Fly (B toggles flight)', 'Movement', False, None),
+    ('h6a8280', 'FLY_SPEED', 'Fly Speed', 'Movement', 10, (1, 60)),
+    ('h7c64f0', 'THIRD_PERSON', 'Freecam', 'Visuals', False, None),
+    ('h003b4d', 'SPAZ_MONSTERS', 'Spaz Monsters', 'Game Mods', False, None),
+    ('h630d2b', 'SOUND_SPAM_ENABLED', 'Loud Boards', 'Detected', False, None),
+    ('hb11fe3', 'SOUND_SPAM_ID', 'Tap Sound ID', 'Detected', 84, (0, 128)),
+    ('h529cd1', 'SLOW_ALL', 'Slow Everyone', 'Detected', False, None),
+    ('he63c1f', 'VIBRATE_ALL', 'Vibrate Everyone', 'Detected', False, None),
+    ('hb607fe', 'PROJECTILE_RAIN', 'Projectile Rain', 'Detected', False, None),
+    ('h603ab2', 'IMPACT_SPAM', 'Impact Spam', 'Detected', False, None),
+    ('hbb9928', 'SET_MASTER_ENABLED', 'Set Master Client', 'Detected', False, None),
+    ('he17165', 'DESTROY_ALL', 'Destroy All', 'Detected', False, None),
+    ('hff1e08', 'LAG_ALL', 'Lag All Players', 'Detected', False, None),
+    ('hcd35ff', 'NAME_TAGS', 'Name Tags', 'Detected', False, None),
+    ('hf9bf19', 'TAG_DUMP', 'Dump Tag Classes', 'Debug', False, None),
+    ('hc5e564', 'TRACERS', 'Tracers', 'Visuals', False, None),
+    ('h919d60', 'BOX_ESP', 'Box ESP', 'Visuals', False, None),
+    ('h93505b', 'RIG_GUN', 'Rig Gun (view)', 'Rig', False, None),
+    ('hdf4d57', 'RIG_GRAB', 'Grab Rig', 'Rig', False, None),
+    ('h18b7d1', 'RIG_SPAZ', 'Spaz Rig', 'Rig', False, None),
+    ('h4c773a', 'RIG_FREEZE', 'Freeze Rig', 'Rig', False, None),
+    ('ha33a96', 'RIG_PARALYZE', 'Paralyze', 'Rig', False, None),
+    ('h130eb1', 'RIG_CHICKEN', 'Chicken Rig', 'Rig', False, None),
+    ('h33680b', 'RIG_AMPUTATE', 'Amputate', 'Rig', False, None),
+    ('h185276', 'RIG_DECAP', 'Decapitate', 'Rig', False, None),
+    ('h7a01f6', 'RIG_FLOAT', 'Floating Head', 'Rig', False, None),
+    ('ha8c2ed', 'RIG_LAGGY', 'Laggy Rig', 'Rig', False, None),
+    ('h720c2b', 'RIG_UPDATE', 'Update Rig', 'Rig', False, None),
+    ('h4ad556', 'ONSCREEN_MENU', 'Show In-Game Menu', 'On-Screen Menu', False, None),
+    ('haf8683', 'HAND_LAG', 'Hand Lag', 'Hand Lag', False, None),
+    ('h25db57', 'HAND_LAG_AMOUNT', 'Hand Lag Amount', 'Hand Lag', 0.7, (0, 1)),
+    ('h866fe3', 'NAME_TAG_HEIGHT', 'Tag Height', 'Detected', 0.55, (0, 2)),
+    ('h793faf', 'NAME_TAG_SCALE', 'Tag Size', 'Detected', 0.004, (0.001, 0.02)),
+    ('hcdcf84', 'NAME_TAG_FPS', 'Show My FPS', 'Detected', True, None),
+    ('h1a0a31', 'ONSCREEN_MENU2', 'Gui Temp Menu (in-VR)', 'On-Screen Menu', False, None),
+    ('hc17916', 'PHYS_MENU', 'Physical Menu (hold Y)', 'On-Screen Menu', False, None),
+    ('h65a00e', 'PHYS_MENU_RIGHT', 'Physical Menu On Right Hand', 'On-Screen Menu', False, None),
+    ('h674dc0', 'PHYS_MENU_SCALE', 'Physical Menu Size', 'On-Screen Menu', 1.15, (0.15, 2.0)),
+    ('h58c0c4', 'PHYS_MENU_LIFT', 'Physical Menu Height', 'On-Screen Menu', 0.26, (0, 1.0)),
+    ('h47d5ae', 'PHYS_MENU_TEXT', 'Physical Menu Text Size', 'On-Screen Menu', 1.0, (0.2, 5.0)),
+    ('h59eb98', 'MENU_W', 'Menu Width', 'On-Screen Menu', 460, (0, 500)),
+    ('hb6c1ff', 'MENU_H', 'Menu Height', 'On-Screen Menu', 360, (0, 500)),
+    ('hee67a6', 'FPS_W', 'FPS Box Width', 'On-Screen Menu', 210, (0, 500)),
+    ('h554510', 'FPS_H', 'FPS Box Height', 'On-Screen Menu', 300, (0, 500)),
 )
-LOCAL_PAGE_ACTIONS = {'Debug': ('check for updates',
-           'DUMP ASSEMBLY-CSHARP',
+# Desktop field metadata from 7644.dist.js and controls2022.js, including slider ranges and choices.
+CURRENT_CONTROLS = (
+    ('PULL_POWER', 'Pull Power', 'Pull Mod', 1.45, (0, 8)),
+    ('leftPullEnabled', 'Pull: Left Hand', 'Pull Mod', False, None),
+    ('rightPullEnabled', 'Pull: Right Hand', 'Pull Mod', True, None),
+    ('leftPullStrength', 'Left Pull Strength', 'Pull Mod', 0.08, (0, 1)),
+    ('leftPullDuration', 'Left Pull Time', 'Pull Mod', 0.04, (0, 0.25)),
+    ('rightPullStrength', 'Right Pull Strength', 'Pull Mod', 0.08, (0, 1)),
+    ('rightPullDuration', 'Right Pull Time', 'Pull Mod', 0.04, (0, 0.25)),
+    ('groundOnly', 'Ground Only Pull', 'Pull Mod', True, None),
+    ('groundNormalMin', 'Ground Normal Min', 'Pull Mod', 0.7, (0, 1)),
+    ('groundFallbackHandDrop', 'Hand Drop Fallback', 'Pull Mod', 0.9, (0, 2)),
+    ('pullApplyMode', 'Pull Apply Mode', 'Pull Mod', 'both', ('position', 'velocity', 'both')),
+    ('pullVelocityScale', 'Pull Velocity Scale', 'Pull Mod', 0.9, (0, 3)),
+    ('SPEED_BOOST_MAX_JUMP', 'Max Jump Speed', 'Speed Boost', 11.4, (6.5, 20)),
+    ('VANILLA_MAX_JUMP', 'Vanilla Max Jump', 'Speed Boost', 6.5, (0, 20)),
+    ('ARM_LENGTH', 'Arm Length', 'Speed Boost', 9999, (0.5, 9999)),
+    ('HIGH_GRAV_STRENGTH', 'High Gravity', 'High Gravity', 0.3, (0, 3)),
+    ('PREDICTION_AMOUNT', 'Prediction Amount', 'Predictions', 0.022, (0, 0.05)),
+    ('TAG_AURA_ENABLED', 'Tag Aura', 'Tag Aura', False, None),
+    ('TAG_AURA_RADIUS', 'Aura Radius', 'Tag Aura', 2.5, (0, 10)),
+    ('TAG_AURA_MODE', 'Aura Mode', 'Tag Aura', 'toggle', ('toggle', 'hold', 'always')),
+    ('TAG_AURA_SHOW_BOX', 'Show Aura Box', 'Tag Aura', False, None),
+    ('TAG_AURA_BIND', 'Tag Aura Bind', 'Tag Aura', 'B', ('A', 'B', 'X', 'Y', 'NONE')),
+    ('HAND_SNAP_ENABLED', 'Hand Snap', 'Hand Snap', False, None),
+    ('HAND_SNAP_RANGE', 'Snap Range', 'Hand Snap', 45, (0, 60)),
+    ('HAND_SNAP_ANGLE', 'Snap Angle', 'Hand Snap', 30, (0, 180)),
+    ('HAND_SNAP_COOLDOWN', 'Snap Cooldown', 'Hand Snap', 1, (0, 5)),
+    ('HAND_SNAP_AIM_HEIGHT', 'Aim Height', 'Hand Snap', 1, (0, 3)),
+    ('TIME_OF_DAY', 'Time Of Day', 'Day / Night', 'none', ('none', 'morning', '10am', 'day', 'evening', 'night')),
+    ('PSA_ENABLED', 'PSA', 'PSA', False, None),
+    ('HZ_SPOOF', 'Hz Spoof', 'Game Mods', False, None),
+    ('PSA_MOVE_SPEED', 'PSA Speed', 'PSA', 8, (1, 30)),
+    ('PSA_DEAD_ZONE', 'PSA Dead Zone', 'PSA', 0.2, (0, 0.95)),
+    ('PSA_RAY_DIST', 'PSA Ray Dist', 'PSA', 5, (1, 50)),
+    ('PSA_RIGHT_ENABLED', 'Right Hand PSA', 'Right Hand PSA', False, None),
+    ('TAG_FIX_ENABLED', 'Tag Fix', 'Tag Fix', False, None),
+    ('TAG_FIX_DISTANCE', 'Tag Fix Distance', 'Tag Fix', 4, (0.1, 10)),
+    ('SNOW_ENABLED', 'Snow', 'QOL', False, None),
+    ('LEAVES_OFF', 'Disable Leaves', 'QOL', False, None),
+    ('FLIP_ENABLED', 'Backflip', 'Fun', False, None),
+    ('FLIP_DIRECTION', 'Flip Direction', 'Fun', 'Backflip', ('Backflip', 'Frontflip')),
+    ('FLIP_DURATION', 'Flip Duration', 'Fun', 0.4, (0.05, 2)),
+    ('FLIP_BIND', 'Flip Button', 'Fun', 'Y', ('A', 'B', 'X', 'Y')),
+    ('FLIP_PRESSES', 'Presses To Flip', 'Fun', 1, (1, 3)),
+    ('BIND_SPEED', 'Bind Speed', 'Speed Boost', 'Y', ('A', 'B', 'X', 'Y', 'NONE')),
+    ('BIND_PREDICTIONS', 'Bind Predictions', 'Predictions', 'X', ('A', 'B', 'X', 'Y', 'NONE')),
+    ('BIND_PSA', 'Bind PSA', 'PSA', 'NONE', ('A', 'B', 'X', 'Y', 'NONE', 'RSTICK')),
+    ('BIND_HANDSNAP', 'Bind Hand Snap', 'Hand Snap', 'NONE', ('A', 'B', 'X', 'Y', 'NONE')),
+    ('SCALE_ENABLED', 'Scale Enabled', 'Local Scale', True, None),
+    ('LOCAL_SCALE', 'Scale', 'Local Scale', 1.3, (0.5, 2)),
+    ('SCALE_AUTO_HEIGHT', 'Auto Height', 'Local Scale', False, None),
+    ('SCALE_HEIGHT_OFFSET', 'Height Offset', 'Local Scale', 0, (-0.5, 0.5)),
+    ('pullDebug', 'Pull Debug', 'Debug', False, None),
+)
+
+CONTROLS_2022 = (
+    ('V22_HAND_TRACKING_ENABLED', 'Quest Hand Tracking', 'Hand Tracking', False, None),
+    ('V22_SPEED_ENABLED', 'Jump Boost (controller or panel)', 'Speed Boost', False, None),
+    ('V22_SPEED_MAX_JUMP', 'Max Jump Speed', 'Speed Boost', 14, (0, 30)),
+    ('V22_SPEED_GRAVITY', 'Downward Force During Boost', 'Speed Boost', 3, (0, 20)),
+    ('V22_GRAVITY_ENABLED', 'Downward Force During Boost', 'Speed Boost', True, None),
+    ('V22_SCALE_ENABLED', 'Player Scale', 'Local Scale', True, None),
+    ('V22_SCALE', 'Player Scale', 'Local Scale', 1.25, (0.25, 3)),
+    ('V22_ARM_LENGTH', 'Arm Length Multiplier', 'Local Scale', 1.2, (0.5, 3)),
+    ('V22_ARM_LENGTH_ENABLED', 'Arm Length', 'Local Scale', True, None),
+    ('V22_ARM_LIMIT', 'Arm Reach Limit', 'Local Scale', 112312.8, (1, 120000)),
+    ('V22_ARM_LIMIT_ENABLED', 'Arm Reach Limit', 'Local Scale', True, None),
+    ('V22_PREDICTION_ENABLED', 'Hand Prediction', 'Predictions', True, None),
+    ('V22_PREDICTION_AMOUNT', 'Hand Prediction Amount', 'Predictions', 0.006, (0, 0.1)),
+    ('V22_PSA_SPEED', 'Strafe Speed (hold controller button)', 'PSA', 0, (0, 35)),
+    ('V22_PSA_ENABLED', 'Strafe (or hold Y)', 'PSA', False, None),
+    ('V22_PULL_ENABLED', 'Pull Mod', 'Pull Mod', False, None),
+    ('PULL_POWER', 'Pull Power', 'Pull Mod', 1.85, (0, 8)),
+    ('leftPullEnabled', 'Pull: Left Hand', 'Pull Mod', False, None),
+    ('rightPullEnabled', 'Pull: Right Hand', 'Pull Mod', True, None),
+    ('leftPullStrength', 'Left Pull Strength', 'Pull Mod', 0.08, (0, 1)),
+    ('rightPullStrength', 'Right Pull Strength', 'Pull Mod', 0.08, (0, 1)),
+    ('leftPullDuration', 'Left Pull Time', 'Pull Mod', 0.04, (0, 0.25)),
+    ('rightPullDuration', 'Right Pull Time', 'Pull Mod', 0.04, (0, 0.25)),
+    ('groundOnly', 'Ground Only Pull', 'Pull Mod', True, None),
+    ('groundNormalMin', 'Ground Normal Min', 'Pull Mod', 0.7, (0, 1)),
+    ('groundFallbackHandDrop', 'Hand Drop Fallback', 'Pull Mod', 0.9, (0, 2)),
+    ('pullApplyMode', 'Pull Apply Mode', 'Pull Mod', 'both', ('position', 'velocity', 'both')),
+    ('pullVelocityScale', 'Pull Velocity Scale', 'Pull Mod', 0.9, (0, 3)),
+)
+
+COSMETIC_CONTROLS = (
+    ('UNLOCK_COSMETICS', 'Unlock All Cosmetics', 'Modsided Cosmetx', False, None),
+    ('COSMETX_MODSIDED', 'Modsided (mod users see each other)', 'Modsided Cosmetx', False, None),
+    ('COSMETX_SYNC_ENABLED', 'Broadcast Outfit To Others', 'Modsided Cosmetx', False, None),
+)
+
+OPTION_TARGETS_2022 = {
+    "PULL_POWER": "V22_PULL_ENABLED",
+    "pullApplyMode": "V22_PULL_ENABLED",
+    "pullVelocityScale": "V22_PULL_ENABLED",
+    "leftPullStrength": "leftPullEnabled",
+    "leftPullDuration": "leftPullEnabled",
+    "rightPullStrength": "rightPullEnabled",
+    "rightPullDuration": "rightPullEnabled",
+    "groundNormalMin": "groundOnly",
+    "groundFallbackHandDrop": "groundOnly",
+    "V22_SPEED_GRAVITY": "V22_GRAVITY_ENABLED",
+}
+
+MIDNIGHT_KEYS = {local: source for local, source, *_ in CATALOG}
+MIDNIGHT_STORAGE_KEYS = {source: local for local, source in MIDNIGHT_KEYS.items()}
+
+PROFILE_BUNDLES = {"Current (default)": "7644.dist.js", "2022": "2022.dist.js"}
+SECTION_BIND = {
+    "Pull Mod": "BIND_SPEED",
+    "Speed Boost": "BIND_SPEED",
+    "High Gravity": "BIND_SPEED",
+    "Predictions": "BIND_PREDICTIONS",
+    "Tag Aura": "TAG_AURA_BIND",
+    "PSA": "BIND_PSA",
+    "Hand Snap": "BIND_HANDSNAP",
+}
+BUTTONS_2022 = ("NONE", "A", "B", "X", "Y", "Left Joystick", "Right Joystick")
+
+
+def profile_schema(bundle):
+    """Build bobgui's desktop controls from the archived profile metadata."""
+    alternate = bundle == "2022.dist.js"
+    rows = list(CONTROLS_2022 if alternate else CURRENT_CONTROLS)
+    if not alternate:
+        rows.extend(row[1:] for row in CATALOG)
+    rows.extend(COSMETIC_CONTROLS)
+    items = []
+    for key, name, page, value, limits in rows:
+        item = dict(key=key, name=name, section=page, value=value, type="bool")
+        item["section"] = nav.section_for_item(item)
+        if isinstance(value, str):
+            item.update(type="string", options=limits)
+        elif type(value) in (float, int):
+            item.update(type="number", min=limits[0], max=limits[1])
+        if alternate and key in OPTION_TARGETS_2022:
+            item["target"] = OPTION_TARGETS_2022[key]
+        items.append(item)
+    if alternate:
+        items.extend([
+            dict(key="V22_BIND_" + item["key"], name="Select toggle: " + item["name"],
+                 target=item["key"], section=item["section"], type="string",
+                 value="X" if item["key"] == "V22_SPEED_ENABLED" else "NONE", options=BUTTONS_2022)
+            for item in items if item["type"] == "bool" and item["key"] != "COSMETX_SYNC_ENABLED"
+        ])
+    return items
+
+LOCAL_PAGE_ACTIONS = {'Debug': ('DUMP ASSEMBLY-CSHARP',
            'DUMP EVERY ASSEMBLY',
            'PULL GAME INFO',
            'COPY RESULTS',
            'SCAN LOBBY',
            'COPY'),
- 'Jump Speed Checker': ('Refresh lobby',),
- 'Pull Mod': ('Controller binding',),
- 'Speed Boost': ('Controller binding',),
- 'High Gravity': ('Controller binding',),
- 'Predictions': ('Controller binding',),
- 'Tag Aura': ('Controller binding',),
- 'PSA': ('Controller binding',),
- 'Hand Snap': ('Controller binding',),
  'Game Mods': ('LIGHTNING',
                'MUTE ALL',
                'UNMUTE ALL',
@@ -3439,7 +3602,7 @@ LOCAL_PAGE_ACTIONS = {'Debug': ('check for updates',
 COLLECTIONS = (
     ("Movement", ("Movement", "Pull Mod", "Speed Boost", "High Gravity", "Hand Snap", "Hand Lag", "Local Scale")),
     ("Tag", ("Tag Aura", "Tag Fix", "Predictions", "PSA", "Right Hand PSA")),
-    ("Visuals", ("Day / Night", "Visuals", "On-Screen Menu")),
+    ("Visuals", ("Day / Night", "Visuals", "Name Tags", "On-Screen Menu")),
     ("Game", ("Game Mods", "Fun", "QOL", "Detected", "Rig", "Modsided Cosmetx")),
     ("Utilities", ("Debug", "Soundboard", "Jump Speed Checker")),
     ("Workspace", ("Connection", "Appearance")),
@@ -3492,11 +3655,21 @@ def _library_tabs(panel, compact):
 
 class Navigation:
     VIRTUAL_PAGES = ("Dashboard", "All Mods", "Enabled Mods", "Favorites")
-    HIDDEN_KEYS = frozenset()
+    HIDDEN_KEYS = frozenset(SECTION_BIND.values()) | {"COSMETX_SYNC_ENABLED"}
+    control_groups = staticmethod(organize_controls)
 
     @staticmethod
     def navigation_groups(schema):
-        return COLLECTIONS
+        available = {Navigation.section_for_item(item) for item in schema}
+        available.update(("Connection", "Appearance", "Debug", "Soundboard", "Jump Speed Checker"))
+        groups = []
+        for title, pages in COLLECTIONS:
+            if title == "Movement" and "Hand Tracking" in available:
+                pages = (*pages, "Hand Tracking")
+            selected = [page for page in pages if page in available]
+            if selected:
+                groups.append((title, selected))
+        return groups
 
     @staticmethod
     def section_label(page):
@@ -3504,24 +3677,19 @@ class Navigation:
 
     @staticmethod
     def section_for_item(item):
-        return item["section"]
+        key = item.get("target") or item["key"]
+        if key in ("UNLOCK_COSMETICS", "COSMETX_MODSIDED", "COSMETX_SYNC_ENABLED"):
+            return "Modsided Cosmetx"
+        if key == "NAME_TAGS" or key.startswith("NAME_TAG_"):
+            return "Name Tags"
+        return item.get("section") or "Other"
 
     @staticmethod
     def matching_items(schema, values, page, query="", favorites=()):
-        words = query.casefold().split()
-        result = []
-        for item in schema:
-            key = item["key"]
-            if page == "Favorites":
-                visible = key in favorites
-            elif page == "Enabled Mods":
-                visible = item["type"] == "bool" and values[key]
-            else:
-                visible = page == "All Mods" or page == item["section"]
-            searchable = (item["name"] + " " + item["section"] + " " + key).casefold()
-            if visible and all(word in searchable for word in words):
-                result.append(item)
-        return result
+        grouped = visible_groups(organize_controls(schema), values, page, query, favorites)
+        visible = {row["key"]: row for primary, options in grouped
+                   for row in ([primary, *options] if primary else options)}
+        return [visible[item["key"]] for item in schema if item["key"] in visible]
 
 
 
@@ -3915,53 +4083,31 @@ class Panel:
         self._online_open = self._share_online = False
         self.share_mode, self.share_until = "Until I turn it off", 0
         self.remember_account = cfg.get("remember_account") is True
-        self.schema = [
-            {
-                "key": key,
-                "name": name,
-                "section": page,
-                "value": default,
-                "type": "number" if bounds else "bool",
-                **({"min": bounds[0], "max": bounds[1]} if bounds else {}),
-            }
-            for key, name, page, default, bounds in CATALOG
-        ]
-        self._section_counts = {}
-        for item in self.schema:
-            page = item["section"]
-            self._section_counts[page] = self._section_counts.get(page, 0) + 1
-        self._nav_counts = self._section_counts | {"All Mods": len(self.schema)}
-        self._counts_dirty = True
-        self.mod_groups = organize_controls(self.schema)
-        self._group_keys = {p["key"]: [p["key"], *(opt["key"] for opt in opts)] for p, opts in self.mod_groups if p}
-        self.library_collections = [("Library", ["All Mods", "Enabled Mods", "Favorites"])]
-        self.library_collections.extend((title, list(pages)) for title, pages in COLLECTIONS if title != "Workspace")
-        self.control_filter = "All"
-        self._expanded_mods, self._detail_heights = set(), {}
-        self._focus_key = self._focus_started = None
+        legacy = read_object(APP_DIR / "havoc_panel.json")
+        self._legacy_favorites = legacy.get("favorites", [])
+        saved_profile = cfg.get("local_agent", legacy.get("local_agent"))
+        self.profile = ("2022.dist.js" if saved_profile in
+                        ("2022.dist.js", "2022.ts", "diddy.dist.js", "diddy.ts") else "7644.dist.js")
+        self._load_profile(cfg)
         self._sample_on, self._sample_level = True, 65
-        self._filter_scope, self._filter_opened = None, set()
-        self.values = self._read_values(cfg.get("values"))
         self._state_due = None
         self.section, self.search = "Dashboard", ""
         self._category_index = False
-        favorites = cfg.get("favorites")
-        self.favorites = (
-            list(dict.fromkeys(key for key in favorites if isinstance(key, str) and key in self.values))
-            if isinstance(favorites, list)
-            else []
-        )
+        self._jump_path = self._jump_error = self._jump_source = ""
+        self._jump_snapshot = None
         self._preset_sel = self._preset_new = ""
         self._preset_preview, self._preset_undo = {}, {}
         self.just_updated, self._show_logs = None, False
         self.changelog = {
             "title": "Havoc Midnight",
-            "notes": "Midnight has organized collection tabs. Review changed settings, expand mod options, preview appearance changes and see the next headset step.",
+            "notes": "TEST MAY NOT INJECT\nThis desktop UI test build edits Current and 2022 profiles locally and plays the included sound clips.\n[Download Havoc.rar with presets and sounds](https://raw.githubusercontent.com/yibbbbbbb/havoc-updates-1/main/downloads/2026.11.27/Havoc.rar)",
         }
         self.headset = HeadsetPanel(self)
         self._audio = MenuAudio(ASSET_ROOT)
         self._clips = None
-        values, self.saved_style = appearance.load(ROOT, {"menu_layout": self.default_layout}, THEME_NAMES)
+        legacy_visual = {key: legacy[key] for key in appearance.LEGACY if key in legacy}
+        legacy_visual["menu_layout"] = self.default_layout
+        values, self.saved_style = appearance.load(ROOT, legacy_visual, THEME_NAMES)
         self.preferences, self.styled, self._bar_anim = {}, False, {}
         self.appearance_tab, self.midnight_tab = "Colors", "Controls"
         self.style_choice, self.preview_cue = "Standard", 1
@@ -3994,21 +4140,83 @@ class Panel:
             self.log(f"Could not save workspace settings: {error}")
             return False
 
-    def _read_values(self, stored, current=None):
+    def _profile_key(self, field):
+        return field if self.profile == "7644.dist.js" else field + "_2022"
+
+    def _stored_values(self):
+        return {MIDNIGHT_STORAGE_KEYS.get(key, key): value for key, value in self.values.items()}
+
+    def _profile_settings(self):
+        return {
+            self._profile_key("values"): self._stored_values(),
+            self._profile_key("favorites"): [MIDNIGHT_STORAGE_KEYS.get(key, key) for key in self.favorites],
+        }
+
+    def _load_profile(self, cfg):
+        self.schema = profile_schema(self.profile)
+        self._items = {item["key"]: item for item in self.schema}
+        self.mod_groups = nav.control_groups(self.schema)
+        self._group_keys = {}
+        self._section_counts = {}
+        for primary, options in self.mod_groups:
+            members = [primary, *options] if primary else options
+            self._group_keys[members[0]["key"]] = [member["key"] for member in members]
+            section = members[0]["section"]
+            self._section_counts[section] = self._section_counts.get(section, 0) + len(members)
+        self._nav_counts = self._section_counts | {"All Mods": sum(self._section_counts.values())}
+        self._counts_dirty = True
+        self.library_collections = [("Library", ["All Mods", "Enabled Mods", "Favorites"])]
+        self.library_collections.extend(group for group in nav.navigation_groups(self.schema) if group[0] != "Workspace")
+        self.values = self._read_values(cfg.get(self._profile_key("values")))
+        favorites = cfg.get(self._profile_key("favorites"), self._legacy_favorites)
+        keys = (MIDNIGHT_KEYS.get(k, k) for k in favorites if isinstance(k, str)) if isinstance(favorites, list) else ()
+        self.favorites = list(dict.fromkeys(k for k in keys if k in self.values and k not in nav.HIDDEN_KEYS))
+        self.control_filter = "All"
+        self._expanded_mods, self._detail_heights = set(), {}
+        self._slider_inputs = {}
+        self._focus_key = self._focus_started = None
+        self._filter_scope, self._filter_opened = None, set()
+
+    def _select_profile(self, bundle):
+        if not self.workspace_open or bundle == self.profile or bundle not in PROFILE_BUNDLES.values():
+            return
+        if not self._save_display_settings(**self._profile_settings(), local_agent=bundle):
+            return
+        self._state_due = None
+        self.profile = bundle
+        self._load_profile(self._load_cfg())
+        self._preset_preview.pop("workspace", None)
+        self._preset_undo.pop("workspace", None)
+        self._preset_sel = self._preset_new = ""
+        self._bar_anim.clear()
+        valid = {p for _, _, pages in _menu_groups(self.schema) for p in pages}
+        self._recent_sections = [p for p in getattr(self, "_recent_sections", []) if p in valid]
+        self._navigate(self.section if self.section in valid else "Connection", feedback=False)
+        self.log("Selected desktop profile " + bundle)
+
+    def _valid_values(self, stored):
         stored = stored if isinstance(stored, dict) else {}
+        # Prefer the profile key if a migrated preset includes both forms.
+        aliases = {MIDNIGHT_KEYS[key]: value for key, value in stored.items() if key in MIDNIGHT_KEYS}
         values = {}
-        for item in self.schema:
-            key = item["key"]
-            default = current.get(key, item["value"]) if current is not None else item["value"]
-            value = stored.get(key, default)
-            if item["type"] == "bool":
-                value = value if isinstance(value, bool) else default
+        for key, value in (aliases | stored).items():
+            item = self._items.get(key)
+            if item is None:
+                continue
+            if item.get("options"):
+                if key in SECTION_BIND.values() and isinstance(value, str):
+                    value = value.upper()
+                if value in item["options"]:
+                    values[key] = value
+            elif item["type"] == "bool":
+                if isinstance(value, bool):
+                    values[key] = value
             elif type(value) in (int, float) and item["min"] <= value <= item["max"]:
-                value = float(value)
-            else:
-                value = default
-            values[key] = value
+                values[key] = float(value)
         return values
+
+    def _read_values(self, stored):
+        return {item["key"]: item["value"] for item in self.schema} | self._valid_values(stored)
 
     def push(self, key, value):
         if not self.workspace_open:
@@ -4019,7 +4227,8 @@ class Panel:
         self._state_due = time.monotonic() + 0.35
 
     def _save_values(self):
-        self._state_due = None if self._save_display_settings(values=self.values) else time.monotonic() + 2
+        saved = self._save_display_settings(**self._profile_settings())
+        self._state_due = None if saved else time.monotonic() + 2
 
     @property
     def workspace_open(self):
@@ -4047,6 +4256,8 @@ class Panel:
         self._focus_key = self._focus_started = None
         self._preset_preview.clear()
         self._preset_undo.clear()
+        self._jump_snapshot = None
+        self._jump_path = self._jump_error = self._jump_source = ""
         self.loglines.clear()
         self.remember_account = False
         self._save_display_settings(remember_account=False, online_share_for=None, share_until=0)
@@ -4257,8 +4468,17 @@ class Panel:
             self._request_close()
 
     def _connection(self):
-        if self.workspace_open:
-            self.headset.draw(self, standalone=True)
+        if not self.workspace_open:
+            return
+        self._section_caption("Desktop profile")
+        labels = list(PROFILE_BUNDLES)
+        bundles = list(PROFILE_BUNDLES.values())
+        imgui.set_next_item_width(-1)
+        changed, index = imgui.combo("##desktop-profile", bundles.index(self.profile), labels)
+        if changed:
+            self._select_profile(bundles[index])
+        imgui.text_disabled(self.profile)
+        self.headset.draw(self, standalone=True)
 
     def _soundboard(self):
         self._page_heading("Library", "Soundboard", "Local playback")
@@ -4300,6 +4520,64 @@ class Panel:
         self._section_caption("Interface sounds")
         appearance.sound_preview(self)
 
+    def _load_jump_snapshot(self):
+        try:
+            path = Path(self._jump_path.strip()).expanduser()
+            if not path.is_file():
+                raise ValueError("Choose a snapshot JSON file.")
+            snapshot = json.loads(path.read_text(encoding="utf-8-sig"))
+            rows = snapshot.get("rows") if isinstance(snapshot, dict) else None
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise ValueError("Expected a jump-speed snapshot containing a rows list.")
+        except (ValueError, OSError, RuntimeError) as error:
+            self._jump_error = str(error)
+            return
+        self._jump_snapshot, self._jump_source = snapshot, str(path)
+        self._jump_error = ""
+        self.log(f"Loaded {len(rows)} player rows from {path.name}")
+
+    def _jump_speed_checker(self):
+        self._page_heading("Diagnostics", "Jump Speed Checker", "Open a recorded bobgui jump-speed snapshot.")
+        imgui.set_next_item_width(-1)
+        _, self._jump_path = imgui.input_text_with_hint("##jump-path", "Snapshot JSON file", self._jump_path)
+        imgui.begin_disabled(not self._jump_path.strip())
+        if imgui.button("Refresh snapshot" if self._jump_path.strip() == self._jump_source else "Load snapshot"):
+            self._load_jump_snapshot()
+        imgui.end_disabled()
+        if self._jump_error:
+            imgui.text_wrapped(self._jump_error)
+        if self._jump_snapshot is None:
+            return
+        imgui.text_wrapped("Showing " + self._jump_source)
+        snapshot = self._jump_snapshot
+        if snapshot.get("note"):
+            imgui.text_wrapped(str(snapshot["note"]))
+        if not snapshot["rows"]:
+            imgui.text_disabled("No players in this snapshot.")
+            return
+
+        def speed(value):
+            if type(value) in (int, float) and -sys.float_info.max <= value <= sys.float_info.max:
+                return f"{value:.2f} m/s"
+            return "Not available"
+
+        flags = imgui.TableFlags_.row_bg | imgui.TableFlags_.borders_inner_h | imgui.TableFlags_.sizing_stretch_prop
+        if imgui.begin_table("##jump_speed_lobby", 3, flags):
+            for title in ("Player", "maxJumpSpeed", "Observed movement"):
+                imgui.table_setup_column(title)
+            imgui.table_headers_row()
+            for row in snapshot["rows"]:
+                imgui.table_next_row()
+                imgui.table_next_column()
+                imgui.text_wrapped(str(row.get("name") or "Unknown"))
+                imgui.table_next_column()
+                imgui.text_colored(PINK if row.get("local") else MUTED, speed(row.get("maxJumpSpeed")))
+                if row.get("note") and imgui.is_item_hovered():
+                    imgui.set_tooltip(str(row["note"]))
+                imgui.table_next_column()
+                imgui.text_unformatted("—" if row.get("local") else speed(row.get("observedSpeed")))
+            imgui.end_table()
+
     def _controls(self):
         if not self.workspace_open:
             return
@@ -4309,6 +4587,7 @@ class Panel:
             "Appearance": self._appearance,
             "Credits": self._credits,
             "Soundboard": self._soundboard,
+            "Jump Speed Checker": self._jump_speed_checker,
         }
         if self.section in special:
             special[self.section]()
@@ -4327,8 +4606,29 @@ class Panel:
                 return
         else:
             self._page_heading("Local editor", _page_label(self.section), None)
+        if self.section == "Debug":
+            self._update_controls()
+        binding = self._items.get(SECTION_BIND.get(self.section))
+        if binding:
+            imgui.text_wrapped("Controller binding")
+            binding_key = binding["key"]
+            buttons = binding["options"]
+            selected = self.values[binding_key]
+            imgui.set_next_item_width(min(220 * self.zoom, imgui.get_content_region_avail().x))
+            changed, index = imgui.combo("##face-button", buttons.index(selected), buttons)
+            if changed:
+                selected = buttons[index]
+                self.push(binding_key, selected)
+            if binding_key == "BIND_SPEED":
+                imgui.text_wrapped("Pull Mod, Speed Boost, and High Gravity share this binding.")
+            if selected != "NONE":
+                clashes = [page for page, key in SECTION_BIND.items()
+                           if key != binding_key and self.values.get(key) == selected]
+                if clashes:
+                    imgui.text_wrapped("Also used by " + ", ".join(clashes))
         if self.section not in nav.VIRTUAL_PAGES and not self._section_counts.get(self.section):
-            imgui.text_wrapped("This page gets its live controls from your installed Havoc runtime.")
+            if self.section != "Debug" and not binding:
+                imgui.text_wrapped("This profile has no local controls on this page.")
             if self.preferences["menu_layout"] != "Midnight":
                 self._related_pages()
             self._session_tools()
@@ -4515,8 +4815,8 @@ class Panel:
     def _update_library_counts(self):
         if self._counts_dirty:
             self._nav_counts["Favorites"] = len(self.favorites)
-            self._nav_counts["Enabled Mods"] = sum(
-                self.values[item["key"]] for item, _ in self.mod_groups if item and item["type"] == "bool"
+            self._nav_counts["Enabled Mods"] = len(
+                visible_groups(self.mod_groups, self.values, "Enabled Mods", "", (), "Enabled")
             )
             self._counts_dirty = False
 
@@ -4531,7 +4831,7 @@ class Panel:
             saved.difference_update(related)
         self.favorites = sorted(saved)
         self._counts_dirty = True
-        self._save_display_settings(favorites=self.favorites)
+        self._save_values()
 
     def _categories(self):
         self._update_library_counts()
@@ -4539,7 +4839,7 @@ class Panel:
         words = self.search.casefold().split()
         matches = [
             (title, [p for p in pages if all(w in (title + " " + p).casefold() for w in words)])
-            for title, pages in COLLECTIONS
+            for title, pages in nav.navigation_groups(self.schema)
             if title != "Workspace"
         ]
         matches = [(title, pages) for title, pages in matches if pages]
@@ -4568,7 +4868,7 @@ class Panel:
             imgui.end_table()
 
     def _related_pages(self):
-        pages = next((pages for _, pages in COLLECTIONS if self.section in pages), ())
+        pages = next((pages for _, pages in nav.navigation_groups(self.schema) if self.section in pages), ())
         nearby = [
             name
             for name in pages
@@ -4582,18 +4882,27 @@ class Panel:
 
     def _session_tools(self):
         labels = LOCAL_PAGE_ACTIONS.get(self.section, ())
-        if labels and imgui.collapsing_header(f"Installed tools ({len(labels)})"):
-            imgui.text_wrapped("These controls are provided by the installed runtime.")
+        if labels and imgui.collapsing_header(f"Live session actions ({len(labels)})"):
+            imgui.text_wrapped("These actions require a live game session and are unavailable in the desktop editor.")
             for label in labels:
                 imgui.bullet_text(label)
 
     def local_presets(self):
-        folder = ROOT / "presets"
-        try:
-            return sorted((p.stem for p in folder.glob("*.json") if p.is_file()), key=str.casefold)
-        except OSError as error:
-            self.log(f"Could not read presets: {error}")
-            return []
+        return list(self._preset_files())
+
+    def _preset_files(self):
+        files = {}
+        folders = dict.fromkeys((ROOT / "presets", APP_DIR / "presets"))
+        for folder in folders:
+            try:
+                entries = sorted(folder.iterdir(), key=lambda path: path.name.casefold()) if folder.is_dir() else ()
+                for path in entries:
+                    if path.is_file() and path.suffix.lower() == ".json":
+                        label = path.stem if folder == ROOT / "presets" else path.stem + " (bobgui)"
+                        files[label] = path
+            except OSError as error:
+                self.log(f"Could not read presets: {error}")
+        return files
 
     @staticmethod
     def _preset_path(label):
@@ -4607,17 +4916,29 @@ class Panel:
             return
         try:
             path = self._preset_path(name)
-            write_object(path, {"values": self.values})
+            write_object(path, {"profile": self.profile, "values": self._stored_values()})
             self._preset_sel = path.stem
             self.log(f"Saved {path.stem}")
         except (ValueError, OSError) as error:
             self.log(str(error))
 
     def _workspace_preset(self, name):
-        stored = read_object(self._preset_path(name)).get("values")
-        if not isinstance(stored, dict):
+        path = self._preset_files().get(name)
+        if path is None:
+            raise ValueError("This preset is no longer available.")
+        record = read_object(path)
+        if "values" in record and record.get("profile", self.profile) != self.profile:
+            raise ValueError("Select this preset's desktop profile on the Connection page.")
+        stored = record.get("values", record)
+        if not isinstance(stored, dict) or not stored:
             raise ValueError("This preset could not be read.")
-        return self._read_values(stored, self.values)
+        values = self._valid_values(stored)
+        if values.get("COSMETX_SYNC_ENABLED") is True:
+            del values["COSMETX_SYNC_ENABLED"]
+        if not values:
+            raise ValueError("This preset has no compatible settings for the selected profile.")
+        self._preset_skipped = len(stored) - len(values)
+        return values
 
     def _prepare_workspace_preset(self, name):
         try:
@@ -4713,6 +5034,8 @@ class Panel:
                 last = self._preset_value(path[-1], after, style)
                 lines.append(f"{label}: {first} → {last}")
             imgui.text_wrapped(f"{name} · {len(lines)} changes")
+            if not style and self._preset_skipped:
+                imgui.text_wrapped(f"{self._preset_skipped} incompatible or excluded settings skipped.")
             if lines:
                 imgui.begin_child("##preset-diff-"+kind, ImVec2(0, min(120*self.zoom, (len(lines)+1)*imgui.get_text_line_height_with_spacing())), True)
                 for line in lines:
@@ -4730,7 +5053,10 @@ class Panel:
         if not self.workspace_open:
             return
         try:
-            self._preset_path(name).unlink()
+            path = self._preset_files().get(name)
+            if path is None or path.parent != ROOT / "presets":
+                raise ValueError("Choose a saved workspace preset to delete.")
+            path.unlink()
             self._preset_sel = ""
             self.log(f"Deleted {name}")
         except (ValueError, OSError) as error:
@@ -5270,7 +5596,9 @@ class Panel:
         results = [(_page_label(s), s, "") for s in pages
                    if all(word in (_page_label(s) + " " + s).lower() for word in words)]
         if words:
-            for item in nav.matching_items(self.schema, self.values, "All Mods", query):
+            for item in self.schema:
+                if item["key"] in nav.HIDDEN_KEYS or not control_matches(item, words):
+                    continue
                 name = item.get("name") or pretty_key(item["key"])
                 results.append((name, nav.section_for_item(item), item["key"]))
         return results
@@ -6601,7 +6929,8 @@ class Panel:
                                                ImVec2(popup_width, max(80, min(420, anchor.y - viewport.pos.y - 12))))
         if imgui.begin_popup("local-presets"):
             self._section_caption("Local presets")
-            names = self.local_presets()
+            files = self._preset_files()
+            names = list(files)
             if names:
                 idx = names.index(self._preset_sel) if self._preset_sel in names else 0
                 imgui.set_next_item_width(-1)
@@ -6610,13 +6939,16 @@ class Panel:
                 if imgui.button("Preview"):
                     self._prepare_workspace_preset(self._preset_sel)
                 imgui.same_line()
+                imgui.begin_disabled(files[self._preset_sel].parent != ROOT / "presets")
                 if imgui.button("Delete"):
                     self.delete_local_preset(self._preset_sel)
+                imgui.end_disabled()
             self._preset_review("workspace", self._preset_sel)
             imgui.set_next_item_width(-1)
             _, self._preset_new = imgui.input_text_with_hint("##pname", "New preset name", self._preset_new)
             if imgui.button("Save"):
-                self.save_local_preset(self._preset_new or self._preset_sel or "preset")
+                selected = files.get(self._preset_sel)
+                self.save_local_preset(self._preset_new or (selected.stem if selected else "preset"))
                 self._preset_new = ""
             imgui.same_line()
             if imgui.button("Reset"):
