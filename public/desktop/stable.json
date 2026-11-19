@@ -1,7 +1,7 @@
 {
   "product": "havoc-midnight-desktop",
-  "version": "2026.11.25",
-  "revision": "47bc063ca49eb6cded9737542256323d9cbdab6b",
-  "sha256": "9776a7005417d94cee0664069bbc40e040915cba575ade273cda08964da35940",
-  "size": 695928
+  "version": "2026.11.26",
+  "revision": "d7675d43ff5ab7bb889b7fcd0e9c85a358cc868c",
+  "sha256": "eb8a4fcb4030b3c12c8437779dfb23b309d646e3feb6c3219c227a334aa215e8",
+  "size": 703636
 }
