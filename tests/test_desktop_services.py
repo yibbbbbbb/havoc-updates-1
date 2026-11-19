@@ -23,10 +23,12 @@ class DesktopReleaseTests(unittest.TestCase):
         self.path.write_bytes(self.previous)
         self.path.chmod(0o750)
         self.start = hashlib.sha256(self.previous).hexdigest()
-        self.data = b'DESKTOP_RELEASE = "2026.11.21"\n'
+        major, minor, build = app.release_number(app.DESKTOP_RELEASE)
+        next_version = f"{major}.{minor}.{build + 1}"
+        self.data = f'DESKTOP_RELEASE = "{next_version}"\n'.encode()
         self.info = {
             "product": "havoc-midnight-desktop",
-            "version": "2026.11.21",
+            "version": next_version,
             "revision": "a" * 40,
             "sha256": hashlib.sha256(self.data).hexdigest(),
             "size": len(self.data),

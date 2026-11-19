@@ -35,7 +35,7 @@ from zipfile import ZipFile
 
 APP_DIR = Path(__file__).resolve().parent
 WINDOW_TITLE = "Havoc Midnight · Local workspace"
-CREDITS_TEXT = "made by Biggy Butch"
+CREDITS_TEXT = "made by biggy, dodo"
 CUSTOM_FRAME = sys.platform == "win32"
 
 
@@ -2407,7 +2407,7 @@ def visible_groups(groups, values, page, query, favorites):
     return result
 
 
-DESKTOP_RELEASE = "2026.11.20"
+DESKTOP_RELEASE = "2026.11.21"
 
 PAGES_ORIGIN = "https://havoc-midnight-preview.pages.dev"
 
@@ -3679,7 +3679,7 @@ class Panel:
         self.just_updated, self._show_logs = None, False
         self.changelog = {
             "title": "Havoc Midnight",
-            "notes": "The bottom-left status bar now shows how many people are sharing their presence. Select the count to open Who’s online.",
+            "notes": "Updated the in-app credit to “made by biggy, dodo”.",
         }
         self.headset = HeadsetPanel(self)
         self._audio = MenuAudio(ASSET_ROOT)
@@ -4399,7 +4399,7 @@ class Panel:
     def _credits(self):
         width = imgui.get_content_region_avail().x
         height = min(510 if width >= 640 else 350, max(237, imgui.get_content_region_avail().y - 8))
-        self._poster("Credits", CREDITS_TEXT, height=height, night=True)
+        self._poster("", CREDITS_TEXT, height=height, night=True)
 
     def _request_close(self):
         if self._closing_at is None:
