@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111019">
+  <meta name="description" content="Explore Havoc Midnight’s desktop update, with release notes and full-size previews of sign-in, headset status, library settings, appearance and credits.">
+  <title>Desktop release notes · Havoc Midnight</title>
+  <link rel="icon" href="./favicon.ico" sizes="16x16 32x32">
+  <link rel="stylesheet" href="./site.css">
+  <script src="./screens.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#screens">Skip to release details</a>
+  <header class="masthead">
+    <div class="wrap header-row">
+      <a class="wordmark" href="#release" aria-label="Havoc Midnight release home">
+        <span class="mark"><span class="pixel" aria-hidden="true"></span></span>
+        <span>HAVOC</span><span class="edition">Midnight</span>
+      </a>
+      <a class="jump" href="#screens">Screen previews <span aria-hidden="true">↓</span></a>
+    </div>
+  </header>
+  <main class="wrap">
+    <section id="release" class="hero" aria-labelledby="release-title">
+      <div class="hero-copy">
+        <div class="dateline"><span>Release notes</span><time datetime="2026-11-18">Nov 18, 2026</time></div>
+        <h1 id="release-title">Midnight<br><span>desktop update</span></h1>
+        <p>Sign-in is back. Follow your headset’s connection status and find each mod’s settings right where you use them.</p>
+      </div>
+    </section>
+    <section id="screens" aria-labelledby="screens-title">
+      <h2 id="screens-title">What changed</h2>
+      <nav class="screen-links" aria-label="Release sections">
+        <a id="tab-connection" href="#connection"><span class="pixel device" aria-hidden="true"></span>Connection</a>
+        <a id="tab-sign-in" href="#sign-in"><span class="pixel power" aria-hidden="true"></span>Sign-in</a>
+        <a id="tab-library" href="#library"><span class="pixel library" aria-hidden="true"></span>Library</a>
+        <a id="tab-appearance" href="#appearance"><span class="pixel style" aria-hidden="true"></span>Appearance</a>
+        <a id="tab-credits" href="#credits"><span class="pixel heart" aria-hidden="true"></span>Credits</a>
+      </nav>
+      <article id="connection" class="screen-panel" aria-labelledby="connection-title">
+        <div class="notes">
+          <h3 id="connection-title">See your headset’s status</h3>
+          <p>Connection lists USB headsets and wireless devices already visible to your computer through Android Debug Bridge (ADB).</p>
+          <ul>
+            <li>See when a device needs authorization, goes offline or becomes available.</li>
+            <li>Choose a headset in Device options. Havoc remembers your selection after a restart.</li>
+            <li>Enable automatic reconnect for a dropped link, or retry manually from Connection.</li>
+          </ul>
+        </div>
+        <figure>
+          <a class="image-link" href="./assets/connection.png" aria-label="Open the full-size Connection screenshot">
+            <img src="./assets/connection.png" alt="The Connection screen with a headset checklist, device options and activity log." width="1280" height="800" decoding="async">
+            <span class="expand" aria-hidden="true">↗</span>
+          </a>
+          <figcaption>Connection screen with a test headset</figcaption>
+        </figure>
+      </article>
+      <article id="sign-in" class="screen-panel" aria-labelledby="sign-in-title">
+        <div class="notes">
+          <h3 id="sign-in-title">Verify before entering the menu</h3>
+          <p>Copy your machine ID, use <code>/verify</code> in the Havoc Discord, then choose <strong>Check verification</strong>. A successful check takes you to Connection.</p>
+          <ul>
+            <li>Cancel a pending check or try again after an error.</li>
+            <li>Choose whether Havoc should verify again when it starts.</li>
+            <li>Log out from Connection to clear the session and return to sign-in.</li>
+          </ul>
+        </div>
+        <figure>
+          <a class="image-link" href="./assets/sign-in.png" aria-label="Open the full-size Sign-in screenshot">
+            <img src="./assets/sign-in.png" alt="The illustrated Havoc sign-in page shows the machine ID, copy control and Check verification button." width="1280" height="800" loading="lazy" decoding="async">
+            <span class="expand" aria-hidden="true">↗</span>
+          </a>
+          <figcaption>Sign-in screen with a sample machine ID</figcaption>
+        </figure>
+      </article>
+      <article id="library" class="screen-panel" aria-labelledby="library-title">
+        <div class="notes">
+          <h3 id="library-title">Find each setting with its mod</h3>
+          <p>The local editor keeps 68 settings on their 24 original pages. Expand a mod to see its controls together.</p>
+          <ul>
+            <li>Search with <kbd>Ctrl</kbd> + <kbd>F</kbd>, or use <kbd>Ctrl</kbd> + <kbd>K</kbd> to jump to a page or field.</li>
+            <li>Filter by Enabled or Favorites and keep the settings attached to each result.</li>
+            <li>Use Presets to save a combination of local editor values.</li>
+          </ul>
+        </div>
+        <figure>
+          <a class="image-link" href="./assets/library.png" aria-label="Open the full-size Library settings screenshot">
+            <img src="./assets/library.png" alt="A Havoc library page shows local editor settings expanded beneath their parent mod." width="1280" height="800" loading="lazy" decoding="async">
+            <span class="expand" aria-hidden="true">↗</span>
+          </a>
+          <figcaption>Library with a mod’s settings expanded</figcaption>
+        </figure>
+      </article>
+      <article id="appearance" class="screen-panel" aria-labelledby="appearance-title">
+        <div class="notes">
+          <h3 id="appearance-title">Make Midnight your own</h3>
+          <p>Appearance brings 43 preferences into three tabs. Changes apply as you edit and are saved for your next session.</p>
+          <ul>
+            <li>Adjust spacing, text size and motion under Controls.</li>
+            <li>Choose a color scheme under Palette. Reset to defaults restores Midnight.</li>
+            <li>Set the volume of the five interface cues or mute them under Audio.</li>
+          </ul>
+        </div>
+        <figure>
+          <a class="image-link" href="./appearance.png" aria-label="Open the full-size Appearance screenshot">
+            <img src="./appearance.png" alt="The Midnight Appearance screen shows controls for layout, animations, glow and borders." width="1280" height="800" loading="lazy" decoding="async">
+            <span class="expand" aria-hidden="true">↗</span>
+          </a>
+          <figcaption>Appearance in the Midnight layout</figcaption>
+        </figure>
+      </article>
+      <article id="credits" class="screen-panel" aria-labelledby="credits-title">
+        <div class="notes">
+          <h3 id="credits-title">made by Biggy Butch</h3>
+          <p>Open Credits from the sign-in screen or from the menu during a session.</p>
+        </div>
+        <figure>
+          <a class="image-link" href="./assets/credits.png" aria-label="Open the full-size Credits screenshot">
+            <img src="./assets/credits.png" alt="The author credit beside the pixel-art observatory on Havoc’s Credits page." width="1280" height="800" loading="lazy" decoding="async">
+            <span class="expand" aria-hidden="true">↗</span>
+          </a>
+          <figcaption>Credits in the Midnight layout</figcaption>
+        </figure>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
