@@ -145,6 +145,41 @@ def until(check):
         time.sleep(0.005)
 
 
+class DailyMessageTests(unittest.TestCase):
+    def test_shared_feed_and_offline_cache(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "message.json"
+            notice = app.DailyMessage(path)
+            self.assertEqual(notice.text, "Zenix is a Bitch")
+            with patch.object(
+                app, "desktop_request", return_value=b'{"message":"New daily message"}'
+            ) as fetch:
+                notice.poll()
+                until(lambda: (notice.poll(), notice.text == "New daily message")[1])
+                notice.poll()
+                fetch.assert_called_once_with(
+                    app.PAGES_ORIGIN + "/desktop/daily-message.json", 2048
+                )
+                self.assertGreater(notice.next_check, time.time())
+            restored = app.DailyMessage(path)
+            with patch.object(
+                app, "desktop_request", side_effect=app.DesktopServiceError("offline")
+            ):
+                restored.poll()
+                until(lambda: (restored.poll(), restored.pending is None)[1])
+            self.assertEqual(restored.text, "New daily message")
+
+    def test_empty_or_oversized_feed_keeps_current_text(self):
+        for value in (
+            {},
+            {"message": " "},
+            {"message": "a" * 121},
+            {"message": "a\nb"},
+            [],
+        ):
+            self.assertFalse(app.DailyMessage._text(value))
+
+
 class OnlineDeskTests(unittest.TestCase):
     def test_footer_refreshes_total_without_fetching_names_or_sharing(self):
         calls = []

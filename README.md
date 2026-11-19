@@ -12,6 +12,10 @@ The green dot in the bottom-left status bar shows how many verified users are sh
 
 [Online list with two local test accounts](previews/online-test-accounts.png) · [Update offered to an older desktop copy](previews/desktop-update.png)
 
+## Daily message
+
+Both desktop layouts show the same public message before and after sign-in. To change it, edit the `message` in `public/desktop/daily-message.json` (up to 120 printable characters) and deploy the Pages site. Open clients refresh within 15 minutes and at midnight UTC. Offline clients display the last saved message or the one included with the desktop.
+
 ## Publishing a desktop release
 
 1. Advance the three-part `DESKTOP_RELEASE` in the maintained desktop source, build it and test it. Commit the finished standalone file at `public/desktop/HavocMidnight.py` to this repository.

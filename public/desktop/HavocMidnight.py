@@ -36,6 +36,7 @@ from zipfile import ZipFile
 APP_DIR = Path(__file__).resolve().parent
 WINDOW_TITLE = "Havoc Midnight · Local workspace"
 CREDITS_TEXT = "made by biggy, dodo"
+DEFAULT_DAILY_MESSAGE = 'Zenix is a Bitch'
 CUSTOM_FRAME = sys.platform == "win32"
 
 
@@ -2004,6 +2005,9 @@ def workspace(panel, now, notice=None):
             imgui.set_cursor_screen_pos(V(a_body.x, b_body.y + 3 * z))
         _tabs(panel, c)
     imgui.set_cursor_screen_pos(a_body)
+    panel._daily_notice(b_body.x - a_body.x)
+    a_body = V(a_body.x, imgui.get_cursor_screen_pos().y)
+    imgui.set_cursor_screen_pos(a_body)
     imgui.begin_child("midnight-body", V(max(1, b_body.x - a_body.x), max(1, b_body.y - a_body.y)))
     _page(panel, c, now, page, notice)
     imgui.end_child()
@@ -2407,7 +2411,7 @@ def visible_groups(groups, values, page, query, favorites):
     return result
 
 
-DESKTOP_RELEASE = "2026.11.23"
+DESKTOP_RELEASE = "2026.11.24"
 
 PAGES_ORIGIN = "https://havoc-midnight-preview.pages.dev"
 
@@ -3654,6 +3658,56 @@ def _menu_groups(schema):
     return [group for group in groups if group[2]]
 
 
+class DailyMessage:
+    def __init__(self, path):
+        self.path = path
+        self.text = self._text(read_object(path)) or DEFAULT_DAILY_MESSAGE
+        self.next_check = 0
+        self.pending = None
+
+    @staticmethod
+    def _text(record):
+        text = record.get("message") if isinstance(record, dict) else None
+        if isinstance(text, str) and 0 < len(text) <= 120 and text.isprintable():
+            return text.strip()
+
+    def poll(self):
+        now = time.time()
+        if self.pending is not None:
+            try:
+                message = self.pending.get_nowait()
+            except queue.Empty:
+                return
+            self.pending = None
+            self.next_check = now + 300
+            if message:
+                self.next_check = min(now + 900, (int(now) // 86400 + 1) * 86400)
+                if self.text != message:
+                    self.text = message
+                    try:
+                        write_object(self.path, {"message": message})
+                    except OSError:
+                        pass
+            return
+        if now < self.next_check:
+            return
+        channel = self.pending = queue.SimpleQueue()
+
+        def fetch_message():
+            try:
+                raw = desktop_request(PAGES_ORIGIN + "/desktop/daily-message.json", 2048)
+                message = self._text(json.loads(raw))
+            except (DesktopServiceError, OSError, ValueError):
+                message = None
+            channel.put(message)
+
+        try:
+            threading.Thread(target=fetch_message, name="havoc-daily-message", daemon=True).start()
+        except RuntimeError:
+            self.pending = None
+            self.next_check = now + 300
+
+
 class Panel:
     default_layout = "Midnight"
 
@@ -3662,6 +3716,7 @@ class Panel:
         self.msg, self.loglines = "Local workspace", []
         self.account = AccountSession()
         self.updater = DesktopUpdater(Path(__file__))
+        self.daily = DailyMessage(ROOT / "daily-message.json")
         self.online = OnlineSession()
         self._online_open = self._share_online = False
         self.remember_account = cfg.get("remember_account") is True
@@ -3698,7 +3753,7 @@ class Panel:
         self.just_updated, self._show_logs = None, False
         self.changelog = {
             "title": "Havoc Midnight",
-            "notes": "Online presence is connected. Open Who’s online to see the shared roster or retry a failed connection.",
+            "notes": "The daily message now appears in both Midnight and Classic, including on the sign-in screen.",
         }
         self.headset = HeadsetPanel(self)
         self._audio = MenuAudio(ASSET_ROOT)
@@ -3800,12 +3855,30 @@ class Panel:
         return hashlib.sha256(identity.encode()).hexdigest()
 
     def _poll_services(self):
+        self.daily.poll()
         self.updater.poll()
         if self.updater.phase == "installed":
             self._request_close()
         if self.workspace_open:
             viewing = self.section == "Dashboard" and self._online_open and not self._show_logs
             self.online.set_interest(self._share_online, viewing, watch=True)
+
+    def _daily_notice(self, width):
+        width = max(1, width)
+        start = imgui.get_cursor_pos_x()
+        label = "Daily message"
+        gap = imgui.get_style().item_spacing.x
+        imgui.begin_group()
+        imgui.push_text_wrap_pos(start + width)
+        imgui.text_colored(PINK, label)
+        if imgui.calc_text_size(label).x + gap + imgui.calc_text_size(self.daily.text).x <= width:
+            imgui.same_line(0, gap)
+        imgui.text_unformatted(self.daily.text)
+        imgui.pop_text_wrap_pos()
+        imgui.end_group()
+        p = imgui.get_cursor_screen_pos()
+        imgui.get_window_draw_list().add_line(p, ImVec2(p.x + width, p.y), imgui.get_color_u32(EDGE))
+        imgui.dummy(ImVec2(1, max(1, self.zoom)))
 
     def _footer_status(self, width):
         if width <= 1:
@@ -4914,6 +4987,7 @@ class Panel:
             return
         self._backdrop()
         self._titlebar()
+        self._daily_notice(imgui.get_content_region_avail().x)
         if self.workspace_open:
             dock_h = 51 if imgui.get_content_region_avail().x < 620 else 45
             body_h = max(1, imgui.get_content_region_avail().y - (dock_h + 54) * self.zoom)
@@ -4998,6 +5072,7 @@ class Panel:
             midnight.workspace(self, imgui.get_time(), notice=update_mode)
             return
         self._backdrop()
+        self._daily_notice(imgui.get_content_region_avail().x)
         avail = imgui.get_content_region_avail()
         w = min(610, max(1, avail.x))
         h = min(530, max(1, avail.y))
