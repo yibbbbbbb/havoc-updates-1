@@ -10,6 +10,8 @@ Open **Home → Updates** or **Sign in → Release notes** and select **Check fo
 
 Open **Home → Who's online** to view the names shared by verified Havoc desktop users. **Show me online** starts sharing your verified display name. Visibility starts off. An explicit logout clears the saved choice. Normal exits send a best-effort sign-out. An interrupted connection expires after at most 100 seconds. An unreachable service shows a retry message.
 
+[Online list with two local test accounts](previews/online-test-accounts.png) · [Update offered to an older desktop copy](previews/desktop-update.png)
+
 ## Publishing a desktop release
 
 1. Advance the three-part `DESKTOP_RELEASE` in the maintained desktop source, build it and test it. Commit the finished standalone file at `public/desktop/HavocMidnight.py` to this repository.
@@ -23,4 +25,4 @@ The Pages Worker serves `/api/presence/*`. It uses the `PRESENCE` D1 binding. Fo
 
 The Worker verifies the same machine identity used for Havoc sign-in. It never stores raw machine IDs or IP addresses in the presence database. It keeps a keyed member identifier to count multiple desktop windows once, a hash of the temporary bearer token, the verified display name and expiration times. The roster exposes only display names and temporary row IDs to verified clients. Sessions expire after 15 minutes, expired rows are discarded on the next verified session creation, and logout deletes that session. Machine verification data and bearer tokens belong exclusively in HTTPS request bodies or headers.
 
-Run `node --test service/presence.test.mjs` with Node 24 or later for the service tests. To preview the static pages locally, run `python -m http.server 8080 --directory public` and open <http://localhost:8080>.
+Run `python -m unittest discover -s tests` in the desktop Python environment for updater and presence-client tests. Run `node --test service/presence.test.mjs` with Node 24 or later for the service tests. To preview the static pages locally, run `python -m http.server 8080 --directory public` and open <http://localhost:8080>.
