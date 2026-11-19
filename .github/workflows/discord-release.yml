@@ -1,0 +1,72 @@
+name: Havoc release announcements
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - public/desktop/stable.json
+      - .github/workflows/discord-release.yml
+      - service/discord_release.py
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Post the current live release to Discord
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: havoc-stable-discord
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    outputs:
+      publish: ${{ steps.mode.outputs.publish }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: mode
+        name: Identify stable promotions
+        env:
+          BEFORE: ${{ github.event.before }}
+          MANUAL_PUBLISH: ${{ inputs.publish }}
+        shell: bash
+        run: |
+          publish=false
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            publish="${MANUAL_PUBLISH:-false}"
+          elif [[ "$BEFORE" != 0000000000000000000000000000000000000000 ]]; then
+            old=$(git rev-parse "$BEFORE:public/desktop/stable.json")
+            new=$(git rev-parse "HEAD:public/desktop/stable.json")
+            if [[ "$old" != "$new" ]]; then publish=true; fi
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+      - name: Verify live release and Discord connection
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 service/discord_release.py --preview
+
+  announce:
+    needs: verify
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Announce this version once
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 service/discord_release.py --send

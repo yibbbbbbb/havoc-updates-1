@@ -40,3 +40,11 @@ The production Pages Worker serves `/api/presence/*` using the `PRESENCE` bindin
 The Worker verifies the same machine identity used for Havoc sign-in. It never stores raw machine IDs or IP addresses in the presence database. It keeps a keyed member identifier to count multiple desktop windows once, a hash of the temporary bearer token, the verified display name and expiration times. The roster exposes only display names and temporary row IDs to verified clients. Sessions expire after 15 minutes, expired rows are discarded on the next verified session creation, and logout deletes that session. Machine verification data and bearer tokens belong exclusively in HTTPS request bodies or headers.
 
 Run `python -m unittest discover -s tests` in the desktop Python environment for updater and presence-client tests. Run `node --test service/presence.test.mjs` with Node 24 or later for the service tests. To preview the static pages locally, run `python -m http.server 8080 --directory public` and open <http://localhost:8080>.
+
+## Discord release announcements
+
+The **Havoc release announcements** workflow watches stable promotions on `main`. It waits for GitHub and Cloudflare to serve matching manifests, verifies the public desktop download, and uses the changelog from that exact file. The announcement includes the version, update instructions, and download link. Configure the channel’s incoming webhook as the repository Actions secret `DISCORD_WEBHOOK_URL`.
+
+Open **Actions → Havoc release announcements → Run workflow** for a read-only preview. Leave **Post the current live release to Discord** unchecked. Previews verify the live Discord connection without posting. Changes to the announcement workflow and its script also run a preview when the stable manifest is unchanged.
+
+Each delivery reserves a Git tag, `discord-announcement/<version>`, before posting. Reruns skip versions with an existing tag. If Discord reports an error after the tag was reserved, check the channel first. If the announcement is missing, delete that version’s reservation tag and run the workflow with publishing selected. A superseded release is skipped.
