@@ -20,10 +20,11 @@ test("authenticated, opt-in roster, unique machines, expiry, pagination and logo
     const {db,env} = database();
     t.after(()=>db.close());
     const users = new Map([["a".repeat(16),"Ada"],["b".repeat(16),"Ben"],["c".repeat(16),"Ada"]]);
-    let offline = false;
+    let upstreamStatus = 200;
     t.mock.method(globalThis, "fetch", async (url, options) => {
         assert.equal(url,"https://havoc-keys.ninjabro0329.workers.dev/verify-check");
-        if (offline) return new Response("",{status:502});
+        assert.equal(options.redirect,"manual");
+        if (upstreamStatus !== 200) return new Response("",{status:upstreamStatus,headers:{"Location":"https://redirect.invalid/"}});
         const body = JSON.parse(options.body);
         assert.equal(body.hwid,body.hwidLegacy);
         const label = users.get(body.hwid);
@@ -81,8 +82,7 @@ test("authenticated, opt-in roster, unique machines, expiry, pagination and logo
     assert.equal((await api("GET","members",b))[0],401);
     await make("a".repeat(16));
     assert.equal(db.prepare("SELECT count(*) AS n FROM presence_session").get().n,1);
-    offline=true;
-    assert.equal((await make("a".repeat(16)))[0],503);
+    for (upstreamStatus of [302,502]) assert.equal((await make("a".repeat(16)))[0],503);
 });
 
 test("unconfigured service and unrelated static assets", async () => {

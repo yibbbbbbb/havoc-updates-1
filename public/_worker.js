@@ -32,7 +32,7 @@ async function readJSON(message, limit) {
 
 async function verifiedLabel(id) {
     const response = await fetch(verification, {
-        method:"POST", redirect:"error", signal:AbortSignal.timeout(9000),
+        method:"POST", redirect:"manual", signal:AbortSignal.timeout(9000),
         headers:{"Content-Type":"application/json","Accept":"application/json"},
         body:JSON.stringify({hwid:id, hwidLegacy:id})
     });
