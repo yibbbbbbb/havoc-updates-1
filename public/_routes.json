@@ -1,1 +1,1 @@
-{"version":1,"include":["/api/presence/*"],"exclude":[]}
+{"version":1,"include":["/api/presence/*","/desktop/daily-message.json"],"exclude":[]}

@@ -6,6 +6,7 @@ The desktop assets are embedded at the end of this file.
 """
 
 import ast
+from datetime import datetime, timezone
 import base64
 import hashlib
 import http.client
@@ -899,12 +900,13 @@ def presets(panel):
     if changed:
         panel.style_choice = names[i]
     imgui.same_line(0, gap)
-    if panel._button("Apply##style", action, 29):
+    if panel._button("Preview##style", action, 29):
         chosen = panel.saved_style if panel.style_choice == "My preset" else {**defaults(), **PROFILES[panel.style_choice]}
         values = chosen.copy()
         if panel.style_choice != "My preset":
             values["menu_layout"] = panel.preferences["menu_layout"]
-        panel._apply_visual(values, save_now=True)
+        panel._preset_preview["style"] = (panel.style_choice, values)
+    panel._preset_review("style", panel.style_choice)
     each = max(1, (w - gap) / 2)
     if panel._button("Save my preset", each, 29):
         # Individual edits replace nested maps, so saved profiles keep their own colors.
@@ -1028,6 +1030,7 @@ appearance = SimpleNamespace(
     FLAGS=FLAGS,
     GROUPS=GROUPS,
     LEGACY=LEGACY,
+    NUMBERS=NUMBERS,
     defaults=defaults,
     editor=editor,
     gradient=gradient,
@@ -2411,13 +2414,20 @@ def visible_groups(groups, values, page, query, favorites):
     return result
 
 
-DESKTOP_RELEASE = "2026.11.24"
+DESKTOP_RELEASE = "2026.11.25"
 
 PAGES_ORIGIN = "https://havoc-midnight-preview.pages.dev"
 
 DESKTOP_REPO = "https://raw.githubusercontent.com/yibbbbbbb/havoc-updates-1"
 
 RELEASE_BYTES = 8 * 1024 * 1024
+
+TRUSTED_BACKUPS = {'1bf1f5a8fa870aac2241f5d98f117598fc0184fb241c27954de93d4b8db534d9': '2026.11.21',
+ '32d809bf673aa831017f842e2eb47f6b0df18d81756e29d66f9e2302269bd351': '2026.11.22',
+ '746de88dcb7e1825dabb32c9b795c18a317ba1ab140af1396c73a50580def42a': '2026.11.19',
+ '95f4b57201d0459085fb0f187d816dfa1149cea2516dfbb5c55389b3809a7cff': '2026.11.20',
+ '9e2fa2d7a3f3e580c84f56c5b527e21a2b2755e0b305e4cab2dcb39944d0ef01': '2026.11.23',
+ 'baa25c8e47fb8bc6fe0f6e9acf52ea4b4d9bd8869975f79c55ec14c0890d0985': '2026.11.24'}  # Filled from the published stable release history during the build.
 
 def atomic_write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2588,6 +2598,34 @@ def install_desktop(path, starting_digest, offered, current=DESKTOP_RELEASE):
         finally:
             staged.unlink(missing_ok=True)
 
+def restore_desktop(path, starting_digest):
+    backup = path.with_suffix(path.suffix + ".previous")
+    with desktop_install_lock(path):
+        if path.is_symlink() or backup.is_symlink() or not path.is_file() or not backup.is_file():
+            raise DesktopServiceError("No regular backup file is available for this desktop.")
+        if backup.stat().st_size > RELEASE_BYTES:
+            raise DesktopServiceError("The saved backup exceeds the release size limit.")
+        with backup.open("rb") as f:
+            previous = f.read(RELEASE_BYTES + 1)
+        version = TRUSTED_BACKUPS.get(hashlib.sha256(previous).hexdigest())
+        if not version or release_number(version) >= release_number(DESKTOP_RELEASE):
+            raise DesktopServiceError("This backup does not match a published earlier Havoc desktop.")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != starting_digest:
+            raise DesktopServiceError("The running desktop file changed. Reopen Havoc before restoring.")
+        # Preserve permissions on the staged file before the atomic replacement.
+        with NamedTemporaryFile(dir=path.parent, prefix=".havoc-restore-", delete=False) as out:
+            staged = Path(out.name)
+        try:
+            with staged.open("wb") as out:
+                out.write(previous)
+                out.flush()
+                os.fsync(out.fileno())
+            os.chmod(staged, stat.S_IMODE(path.stat().st_mode))
+            os.replace(staged, path)
+        finally:
+            staged.unlink(missing_ok=True)
+        return version
+
 class DesktopUpdater:
     def __init__(self, path):
         self.path = Path(path).absolute()
@@ -2598,23 +2636,28 @@ class DesktopUpdater:
         self.phase, self.message, self.offer = "idle", "", None
         self.pending = None
 
-    def start(self, install=False):
+    def start(self, install=False, *, restore=False):
         if self.pending is not None or self.phase == "installed":
             return
         offer = self.offer
         if install and (not self.digest or offer is None):
             return
-        self.phase = "installing" if install else "checking"
+        self.phase = "installing" if install or restore else "checking"
         self.message = (
             "Verifying and installing the download…"
             if install
             else "Checking the latest desktop release…"
         )
+        if restore:
+            self.message = "Checking the saved backup…"
         channel = self.pending = queue.SimpleQueue()
 
         def work():
             try:
-                if install:
+                if restore:
+                    version = restore_desktop(self.path, self.digest)
+                    result = ("installed", f"Restored {version}. Restarting Havoc…", None)
+                elif install:
                     install_desktop(self.path, self.digest, offer)
                     result = ("installed", "Update installed. Restarting Havoc…", None)
                 else:
@@ -2651,7 +2694,7 @@ class DesktopUpdater:
 
         try:
             threading.Thread(
-                target=work, daemon=not install, name="havoc-desktop-update"
+                target=work, daemon=not (install or restore), name="havoc-desktop-update"
             ).start()
         except RuntimeError:
             self.pending, self.phase, self.message = (
@@ -2718,6 +2761,7 @@ class OnlineSession:
         self.cv = threading.Condition()
         self.desired = (False, False, False)
         self.revision = 0
+        self.share_until = 0
         self.ended = False
         self.retry_available = False
         self.thread = None
@@ -2729,10 +2773,11 @@ class OnlineSession:
         value, checked = self._count
         return value if 0 <= time.time() - checked < 75 else None
 
-    def set_interest(self, share, view, *, watch=False):
+    def set_interest(self, share, view, *, watch=False, until=0):
         with self.cv:
-            if self.ended or (share, view, watch) == self.desired:
+            if self.ended or ((share, view, watch) == self.desired and self.share_until == until):
                 return
+            self.share_until = until
             self.desired = (share, view, watch)
             self.retry_available = False
             if not any(self.desired):
@@ -2790,6 +2835,8 @@ class OnlineSession:
                     if self.ended:
                         return
                     share, view, watch = self.desired
+                    until = self.share_until
+                    share = share and (not until or time.time() < until)
                     rev = self.revision
                 delay = None
                 if share or view or watch:
@@ -2813,7 +2860,10 @@ class OnlineSession:
                                 continue
                         if share or view or was_sharing:
                             was_sharing = share or was_sharing
-                            presence_request("live", "PUT", token, {"visible": share})
+                            body = {"visible": share}
+                            if share and until:
+                                body["until"] = until
+                            presence_request("live", "PUT", token, body)
                             was_sharing = share
                         names = (
                             online_roster(token, lambda rev=rev: self.revision == rev)
@@ -2878,6 +2928,60 @@ class OnlineSession:
                     )
         finally:
             self._leave(token)
+
+
+def message_text(value):
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value) > 120
+        or not value.isprintable()
+    ):
+        raise ValueError("Use 1–120 printable characters for each message.")
+    return value.strip()
+
+def message_timestamp(value):
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+        if parsed.strftime("%Y-%m-%dT%H:%M:%SZ") == value:
+            return int(parsed.timestamp())
+    except (TypeError, ValueError, OverflowError):
+        pass
+    raise ValueError("Use UTC times in YYYY-MM-DDTHH:MM:SSZ format.")
+
+def parse_message_feed(record):
+    if not isinstance(record, dict):
+        raise ValueError("Invalid message feed.")
+    fallback = message_text(record.get("message"))
+    rows = record.get("schedule", [])
+    if not isinstance(rows, list) or len(rows) > 64:
+        raise ValueError("Queue up to 64 announcements.")
+    windows = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("Invalid announcement.")
+        start, end = (
+            message_timestamp(row.get("start")),
+            message_timestamp(row.get("end")),
+        )
+        if end <= start:
+            raise ValueError("Expiration must follow the start time.")
+        windows.append((start, end, message_text(row.get("message"))))
+    windows.sort()
+    if any(a[1] > b[0] for a, b in zip(windows, windows[1:])):
+        raise ValueError("Announcement times overlap.")
+    return fallback, windows
+
+def scheduled_message(feed, now):
+    fallback, windows = feed
+    for start, end, message in windows:
+        if now < start:
+            return fallback, start
+        if now < end:
+            return message, end
+    return fallback, float("inf")
 
 class HeadsetPanel:
     """The device inspector shared by the standalone and installed menus."""
@@ -3067,6 +3171,40 @@ class HeadsetPanel:
                 panel._save_display_settings(monitor_serial=self.serial)
                 panel.log("Selected " + self.selected().name)
 
+    def diagnostic_report(self, signed_in):
+        device = self.selected()
+        state = device.state if device else ""
+        adb = {"idle":"Not checked","checking":"Checking","live":"Listening","error":"Unavailable"}.get(self.phase, "Unknown")
+        authorization = {"device":"Approved","offline":"Offline","unauthorized":"Approval needed",
+                         "authorizing":"Approval pending","no permissions":"USB permission needed"}.get(state, "Not established")
+        if not signed_in:
+            action = "Verify your account on the sign-in screen."
+        elif self.phase == "idle":
+            action = "Select Connect to start the headset check."
+        elif self.phase == "checking":
+            action = "Wait for Android Debug Bridge to respond."
+        elif self.phase == "error":
+            if self.error.startswith("Install Android SDK"):
+                action = "Install Android SDK Platform-Tools, then select Connect."
+            elif self.error.startswith("The local ADB server port"):
+                action = "Correct the local ADB port setting, then retry."
+            else:
+                action = "Restart the local Android Debug Bridge service, then retry."
+        elif not device:
+            action = "Choose a connected headset." if self.devices else "Connect an unlocked headset with a USB data cable."
+        elif state == "device":
+            action = "The headset is connected and authorized."
+        elif state in ("unauthorized","authorizing"):
+            action = "Unlock the headset and approve the USB debugging prompt."
+        elif state == "no permissions":
+            action = "Grant your operating system USB access to the headset, then reconnect."
+        else:
+            action = "Reconnect the headset, unlock it and check again."
+        transport = device.transport if device and device.transport in ("USB","Wireless","Emulator","ADB") else "Unknown"
+        return "\n".join((f"Havoc desktop {DESKTOP_RELEASE}", "Account: " + ("Signed in" if signed_in else "Signed out"),
+                          "Android Debug Bridge: " + adb, f"Devices detected: {len(self.devices)}",
+                          "Selected transport: " + transport, "Authorization: " + authorization, "Next step: " + action))
+
     def _checks(self, panel):
         panel._section_caption("Connection checks")
         selected = self.selected()
@@ -3161,6 +3299,12 @@ class HeadsetPanel:
             if panel._button("Log out", min(w, 104 * panel.zoom), 28):
                 panel.logout()
                 return
+        if imgui.collapsing_header("Connection diagnostics"):
+            report = self.diagnostic_report(panel.workspace_open)
+            imgui.text_wrapped(report)
+            if panel._button("Copy report", min(w, 130*panel.zoom), 28):
+                imgui.set_clipboard_text(report)
+                panel.log("Diagnostic report copied")
         if imgui.collapsing_header("Device options"):
             changed, enabled = imgui.checkbox("Reconnect after a lost connection", self.auto_retry)
             if changed:
@@ -3661,18 +3805,31 @@ def _menu_groups(schema):
 class DailyMessage:
     def __init__(self, path):
         self.path = path
-        self.text = self._text(read_object(path)) or DEFAULT_DAILY_MESSAGE
+        self.record = read_object(path)
+        try:
+            self.feed = parse_message_feed(self.record)
+        except ValueError:
+            self.record = {"message": DEFAULT_DAILY_MESSAGE}
+            self.feed = parse_message_feed(self.record)
+        self.last_clock = time.time()
+        self.text, self.boundary = scheduled_message(self.feed, self.last_clock)
         self.next_check = 0
         self.pending = None
 
     @staticmethod
     def _text(record):
-        text = record.get("message") if isinstance(record, dict) else None
-        if isinstance(text, str) and 0 < len(text) <= 120 and text.isprintable():
-            return text.strip()
+        try:
+            return parse_message_feed(record)[0]
+        except ValueError:
+            return None
 
     def poll(self):
         now = time.time()
+        if now >= self.boundary or now < self.last_clock:
+            self.text, self.boundary = scheduled_message(self.feed, now)
+        if now < self.last_clock:
+            self.next_check = now
+        self.last_clock = now
         if self.pending is not None:
             try:
                 message = self.pending.get_nowait()
@@ -3682,10 +3839,12 @@ class DailyMessage:
             self.next_check = now + 300
             if message:
                 self.next_check = min(now + 900, (int(now) // 86400 + 1) * 86400)
-                if self.text != message:
-                    self.text = message
+                record, feed = message
+                if self.record != record:
+                    self.record, self.feed = record, feed
+                    self.text, self.boundary = scheduled_message(feed, now)
                     try:
-                        write_object(self.path, {"message": message})
+                        write_object(self.path, record)
                     except OSError:
                         pass
             return
@@ -3695,8 +3854,9 @@ class DailyMessage:
 
         def fetch_message():
             try:
-                raw = desktop_request(PAGES_ORIGIN + "/desktop/daily-message.json", 2048)
-                message = self._text(json.loads(raw))
+                raw = desktop_request(PAGES_ORIGIN + "/desktop/daily-message.json?schedule=1", 65536)
+                record = json.loads(raw)
+                message = record, parse_message_feed(record)
             except (DesktopServiceError, OSError, ValueError):
                 message = None
             channel.put(message)
@@ -3716,9 +3876,13 @@ class Panel:
         self.msg, self.loglines = "Local workspace", []
         self.account = AccountSession()
         self.updater = DesktopUpdater(Path(__file__))
+        self.update_notices = cfg.get("update_notifications") is True
+        if self.update_notices:
+            self.updater.start()
         self.daily = DailyMessage(ROOT / "daily-message.json")
         self.online = OnlineSession()
         self._online_open = self._share_online = False
+        self.share_mode, self.share_until = "Until I turn it off", 0
         self.remember_account = cfg.get("remember_account") is True
         self.schema = [
             {
@@ -3750,10 +3914,11 @@ class Panel:
             else []
         )
         self._preset_sel = self._preset_new = ""
+        self._preset_preview, self._preset_undo = {}, {}
         self.just_updated, self._show_logs = None, False
         self.changelog = {
             "title": "Havoc Midnight",
-            "notes": "The daily message now appears in both Midnight and Classic, including on the sign-in screen.",
+            "notes": "Connection reports, preset previews and undo, verified rollback, scheduled messages, startup update checks and timed visibility are now available.",
         }
         self.headset = HeadsetPanel(self)
         self._audio = MenuAudio(ASSET_ROOT)
@@ -3824,7 +3989,7 @@ class Panel:
 
     def _poll_account(self):
         if self.account.poll() and self.workspace_open:
-            self._share_online = self._load_cfg().get("online_share_for") == self._online_pref_key()
+            self._restore_visibility()
             self._signed_out_credits = False
             self._show_logs = False
             self._save_display_settings(remember_account=self.remember_account)
@@ -3835,12 +4000,15 @@ class Panel:
         self.online.close()
         self.online = OnlineSession()
         self._online_open = self._share_online = False
+        self.share_mode, self.share_until = "Until I turn it off", 0
         self.headset.close()
         self._audio.stop_clip()
         self.account.clear()
+        self._preset_preview.clear()
+        self._preset_undo.clear()
         self.loglines.clear()
         self.remember_account = False
-        self._save_display_settings(remember_account=False, online_share_for=None)
+        self._save_display_settings(remember_account=False, online_share_for=None, share_until=0)
         self.section, self.search = "Connection", ""
         self._page_trail, self._recent_sections = [], []
         self._palette_query, self._palette_index = "", 0
@@ -3854,14 +4022,34 @@ class Panel:
         identity = machine_ids()[0] + "|" + self.account.user
         return hashlib.sha256(identity.encode()).hexdigest()
 
+    def _restore_visibility(self):
+        cfg = self._load_cfg()
+        until = cfg.get("share_until", 0)
+        active = cfg.get("online_share_for") == self._online_pref_key()
+        self._share_online = active and type(until) is int and (until == 0 or until > time.time())
+        self.share_until = until if self._share_online else 0
+        self.share_mode = "For one hour" if self.share_until else "Until I turn it off"
+        if active and not self._share_online:
+            self._save_display_settings(online_share_for=None, share_until=0)
+
+    def _set_visibility(self, share, mode):
+        self._share_online, self.share_mode = share, mode
+        self.share_until = int(time.time()) + 3600 if share and mode == "For one hour" else 0
+        self._save_display_settings(
+            online_share_for=self._online_pref_key() if share and mode != "Until I quit" else None,
+            share_until=self.share_until,
+        )
+
     def _poll_services(self):
         self.daily.poll()
         self.updater.poll()
         if self.updater.phase == "installed":
             self._request_close()
         if self.workspace_open:
+            if self.share_until and time.time() >= self.share_until:
+                self._set_visibility(False, self.share_mode)
             viewing = self.section == "Dashboard" and self._online_open and not self._show_logs
-            self.online.set_interest(self._share_online, viewing, watch=True)
+            self.online.set_interest(self._share_online, viewing, watch=True, until=self.share_until)
 
     def _daily_notice(self, width):
         width = max(1, width)
@@ -3876,6 +4064,9 @@ class Panel:
         imgui.text_unformatted(self.daily.text)
         imgui.pop_text_wrap_pos()
         imgui.end_group()
+        if self.update_notices and self.updater.offer and not self._show_logs:
+            if self._button("Update available", min(width, 145*self.zoom), 26):
+                self._show_logs = True
         p = imgui.get_cursor_screen_pos()
         imgui.get_window_draw_list().add_line(p, ImVec2(p.x + width, p.y), imgui.get_color_u32(EDGE))
         imgui.dummy(ImVec2(1, max(1, self.zoom)))
@@ -3926,10 +4117,15 @@ class Panel:
         self._section_caption("Online in Havoc")
         imgui.text_wrapped("Only signed-in people who choose to share appear here.")
         changed, share = imgui.checkbox("Show me online", self._share_online)
-        if changed:
-            self._share_online = share
-            self._save_display_settings(online_share_for=self._online_pref_key() if share else None)
-            self.online.set_interest(share, True, watch=True)
+        modes = ("Until I turn it off", "For one hour", "Until I quit")
+        imgui.set_next_item_width(min(width*0.6, 210*self.zoom))
+        mode_changed, index = imgui.combo("Visibility duration", modes.index(self.share_mode), modes)
+        if changed or mode_changed:
+            self._set_visibility(share, modes[index])
+            self.online.set_interest(share, True, watch=True, until=self.share_until)
+        if self.share_until:
+            minutes = max(0, math.ceil((self.share_until-time.time())/60))
+            imgui.text_disabled(f"Sharing for {minutes} more min")
         status, names = self.online.snapshot
         if status:
             imgui.text_wrapped(status)
@@ -3954,6 +4150,10 @@ class Panel:
     def _update_controls(self):
         self._section_caption("Desktop updates")
         imgui.text_unformatted("Installed  " + DESKTOP_RELEASE)
+        changed, enabled = imgui.checkbox("Check for updates on startup", self.update_notices)
+        if changed:
+            self.update_notices = enabled
+            self._save_display_settings(update_notifications=enabled)
         update = self.updater
         if update.message:
             imgui.text_wrapped(update.message)
@@ -3968,6 +4168,9 @@ class Panel:
         elif update.pending is None and update.phase != "installed":
             if self._button("Check for updates", width, 34, primary=True):
                 update.start()
+        if update.pending is None and update.phase != "installed" and update.path.with_suffix(update.path.suffix + ".previous").is_file():
+            if self._button("Restore previous version and restart", max(width, min(imgui.get_content_region_avail().x, 320*self.zoom)), 32):
+                update.start(restore=True)
         imgui.spacing()
 
     def _sign_in_form(self):
@@ -4277,19 +4480,118 @@ class Panel:
         except (ValueError, OSError) as error:
             self.log(str(error))
 
-    def load_local_preset(self, name):
-        if not self.workspace_open:
-            return
+    def _workspace_preset(self, name):
+        stored = read_object(self._preset_path(name)).get("values")
+        if not isinstance(stored, dict):
+            raise ValueError("This preset could not be read.")
+        return self._read_values(stored, self.values)
+
+    def _prepare_workspace_preset(self, name):
         try:
-            stored = read_object(self._preset_path(name)).get("values")
-            if not isinstance(stored, dict):
-                raise ValueError("This preset could not be read.")
-            self.values = self._read_values(stored, self.values)
+            self._preset_preview["workspace"] = (name, self._workspace_preset(name))
+        except (ValueError, OSError) as error:
+            self._preset_preview.pop("workspace", None)
+            self.log(str(error))
+
+    def _apply_preset_values(self, kind, values):
+        if kind == "style":
+            self._apply_visual(values, save_now=True)
+        else:
+            self.values = values
             self._counts_dirty = True
             self._save_values()
-            self.log(f"Loaded {name}")
-        except (ValueError, OSError) as error:
-            self.log(str(error))
+
+    @staticmethod
+    def _preset_changes(before, after, path=()):
+        for key in sorted(before.keys() | after.keys()):
+            a, b = before.get(key), after.get(key)
+            if a == b:
+                continue
+            if isinstance(a, dict) or isinstance(b, dict):
+                yield from Panel._preset_changes(a or {}, b or {}, path + (key,))
+            else:
+                yield path + (key,), a, b
+
+    def _commit_preset(self, kind, name, target):
+        if not self.workspace_open:
+            return
+        current = self.preferences if kind == "style" else self.values
+        original = list(self._preset_changes(current, current | target))
+        if original:
+            self._apply_preset_values(kind, current | target)
+            self._preset_undo[kind] = (name, original)
+        self._preset_preview.pop(kind, None)
+        self.log(f"Loaded {name}")
+
+    def _undo_preset(self, kind):
+        if not self.workspace_open or kind not in self._preset_undo:
+            return
+        name, original = self._preset_undo.pop(kind)
+        current = self.preferences if kind == "style" else self.values
+        restored = dict(current)
+        for path, previous, _ in original:
+            node = restored
+            for part in path[:-1]:
+                node[part] = dict(node.get(part, {}))
+                node = node[part]
+            if previous is None:
+                node.pop(path[-1], None)
+            else:
+                node[path[-1]] = previous
+        self._apply_preset_values(kind, restored)
+        self.log(f"Undid {name}")
+
+    def load_local_preset(self, name):
+        if self.workspace_open:
+            try:
+                self._commit_preset("workspace", name, self._workspace_preset(name))
+            except (ValueError, OSError) as error:
+                self.log(str(error))
+
+    @staticmethod
+    def _preset_value(key, value, style):
+        if value is None:
+            return "Theme default"
+        if isinstance(value, bool):
+            return "On" if value else "Off"
+        if isinstance(value, (tuple, list)) and len(value) == 3:
+            return "#" + "".join(f"{int(n):02X}" for n in value)
+        if style and key in appearance.NUMBERS:
+            return appearance.NUMBERS[key][3] % value
+        if isinstance(value, float):
+            return f"{value:g}"
+        return str(value)
+
+    def _preset_review(self, kind, selection):
+        preview = self._preset_preview.get(kind)
+        if preview and preview[0] != selection:
+            self._preset_preview.pop(kind)
+            preview = None
+        if preview:
+            name, target = preview
+            style = kind == "style"
+            current = self.preferences if style else self.values
+            labels = ({k: label for items in appearance.GROUPS.values() for k, label in items}
+                      if style else {row["key"]: row["name"] for row in self.schema})
+            lines = []
+            for path, before, after in self._preset_changes(current, current | target):
+                label = " / ".join(labels.get(key, key.replace("_", " ").title()) for key in path)
+                first = self._preset_value(path[-1], before, style)
+                last = self._preset_value(path[-1], after, style)
+                lines.append(f"{label}: {first} → {last}")
+            imgui.text_wrapped(f"{name} · {len(lines)} changes")
+            if lines:
+                imgui.begin_child("##preset-diff-"+kind, ImVec2(0, min(120*self.zoom, (len(lines)+1)*imgui.get_text_line_height_with_spacing())), True)
+                for line in lines:
+                    imgui.text_wrapped(line)
+                imgui.end_child()
+                if imgui.button("Apply preset##"+kind):
+                    self._commit_preset(kind, name, target)
+                imgui.same_line()
+            if imgui.button("Cancel##preset-"+kind):
+                self._preset_preview.pop(kind, None)
+        if kind in self._preset_undo and imgui.button("Undo preset##"+kind):
+            self._undo_preset(kind)
 
     def delete_local_preset(self, name):
         if not self.workspace_open:
@@ -6150,7 +6452,14 @@ class Panel:
         imgui.set_cursor_pos(ImVec2(start.x + w - button_w, start.y))
         if self._button("Presets", button_w):
             imgui.open_popup("local-presets")
-        imgui.set_next_window_size_constraints(ImVec2(min(282, w), 0), ImVec2(max(w, 1), 420))
+        anchor = imgui.get_item_rect_min()
+        right = imgui.get_item_rect_max().x
+        viewport = imgui.get_main_viewport()
+        popup_width = min(360 * self.zoom, viewport.size.x - 16)
+        imgui.set_next_window_pos(ImVec2(max(viewport.pos.x + popup_width + 8, right), anchor.y - 4),
+                                  imgui.Cond_.always, ImVec2(1, 1))
+        imgui.set_next_window_size_constraints(ImVec2(popup_width, 0),
+                                               ImVec2(popup_width, max(80, min(420, anchor.y - viewport.pos.y - 12))))
         if imgui.begin_popup("local-presets"):
             self._section_caption("Local presets")
             names = self.local_presets()
@@ -6159,11 +6468,12 @@ class Panel:
                 imgui.set_next_item_width(-1)
                 _, idx = imgui.combo("##preset", idx, names)
                 self._preset_sel = names[idx]
-                if imgui.button("Load"):
-                    self.load_local_preset(self._preset_sel)
+                if imgui.button("Preview"):
+                    self._prepare_workspace_preset(self._preset_sel)
                 imgui.same_line()
                 if imgui.button("Delete"):
                     self.delete_local_preset(self._preset_sel)
+            self._preset_review("workspace", self._preset_sel)
             imgui.set_next_item_width(-1)
             _, self._preset_new = imgui.input_text_with_hint("##pname", "New preset name", self._preset_new)
             if imgui.button("Save"):

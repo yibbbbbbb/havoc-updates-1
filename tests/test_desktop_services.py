@@ -158,7 +158,7 @@ class DailyMessageTests(unittest.TestCase):
                 until(lambda: (notice.poll(), notice.text == "New daily message")[1])
                 notice.poll()
                 fetch.assert_called_once_with(
-                    app.PAGES_ORIGIN + "/desktop/daily-message.json", 2048
+                    app.PAGES_ORIGIN + "/desktop/daily-message.json?schedule=1", 65536
                 )
                 self.assertGreater(notice.next_check, time.time())
             restored = app.DailyMessage(path)

@@ -6,19 +6,25 @@ Save the Python file in a writable folder. On Windows, install the UI library wi
 
 ## Using the desktop
 
-Open **Home → Updates** or **Sign in → Release notes** and select **Check for updates**. When a newer release is available, **Install … and restart** downloads it, verifies it and restarts Havoc. The preceding file is saved beside the desktop as `HavocMidnight.py.previous`.
+Open **Home → Updates** or **Sign in → Release notes** and select **Check for updates**. When a newer release is available, **Install … and restart** downloads it, verifies it and restarts Havoc. Turn on **Check for updates on startup** to see a notice when a release is available. Installation always takes a click. The updater keeps the preceding file beside the desktop as `HavocMidnight.py.previous`. **Restore previous version and restart** checks that backup against the history of published releases before restoring it. Your workspace and preferences are stored separately.
 
-The green dot in the bottom-left status bar shows how many verified users are sharing their presence. It refreshes every 30 seconds. A gray dot and a dash mean a current count is unavailable. Select the count or open **Home → Who's online** to view the names shared by verified Havoc desktop users. **Show me online** starts sharing your verified display name. Visibility starts off. An explicit logout clears the saved choice. Normal exits send a best-effort sign-out. An interrupted connection expires after at most 100 seconds. If the service is unreachable, the desktop retries automatically. Select **Retry connection** in the online list to try immediately.
+On **Connection**, expand **Connection diagnostics** and choose **Copy report**. The report includes the ADB state, device count, authorization state and suggested next step. It omits device names, addresses, account identifiers and raw error text.
+
+In **Presets** or **Appearance**, choose a preset and select **Preview** to review each change. **Apply preset** saves it. **Undo preset** reverses the last application in that category for the current session.
+
+The green dot in the bottom-left status bar shows how many verified users are sharing their presence. It refreshes every 30 seconds. A gray dot and a dash mean a current count is unavailable. Select the count or open **Home → Who's online** to view the names shared by verified Havoc desktop users. **Show me online** starts sharing your verified display name. Visibility starts off. Choose **For one hour**, **Until I quit**, or **Until I turn it off**. The service enforces the one-hour deadline even if the desktop stops responding. An explicit logout clears the saved choice. Normal exits send a best-effort sign-out. An interrupted connection expires after at most 100 seconds. If the service is unreachable, the desktop retries automatically. Select **Retry connection** in the online list to try immediately.
 
 [Online list with two local test accounts](previews/online-test-accounts.png) · [Update offered to an older desktop copy](previews/desktop-update.png)
 
 ## Daily message
 
-Both desktop layouts show the same public message before and after sign-in. To change it, edit the `message` in `public/desktop/daily-message.json` (up to 120 printable characters) and deploy the Pages site. Open clients refresh within 15 minutes and at midnight UTC. Offline clients display the last saved message or the one included with the desktop.
+Both desktop layouts show the same public message before and after sign-in. From the release repository, the publisher can run `python service/announcements.py` with Tk installed. Enter a default message or give a draft a UTC start and expiry. Use **Preview Midnight** or **Preview Classic** to see the draft in the desktop. Choose **Queue / replace**, then **Save schedule**. Commit `public/desktop/daily-message.json` and deploy the Pages site to publish it.
+
+Messages allow 1–120 printable characters. Up to 64 nonoverlapping intervals can be queued. The default appears between intervals. Desktops refresh the schedule within 15 minutes and at midnight UTC. A cached schedule also switches at its boundaries offline. Older desktops receive the currently active message on their normal refresh.
 
 ## Publishing a desktop release
 
-1. Advance the three-part `DESKTOP_RELEASE` in the maintained desktop source, build it and test it. Commit the finished standalone file at `public/desktop/HavocMidnight.py` to this repository.
+1. Advance the three-part `DESKTOP_RELEASE` in the maintained desktop source, build it and test it. The desktop builder includes the SHA-256 and version of each earlier stable release in `TRUSTED_BACKUPS`. If editing the standalone source directly, retain that history and add the preceding stable manifest’s digest and version. Commit the finished standalone file at `public/desktop/HavocMidnight.py` to this repository.
 2. From this checkout, run `python service/publish_manifest.py <full-artifact-commit-id>`. It checks the committed bytes against the local file and writes `public/desktop/stable.json`. Commit that file to `main`.
 3. Deploy the contents of `public/` to the existing Cloudflare Pages project **havoc-midnight-preview**. Include the Pages advanced-mode Worker, routes and headers. The desktop trusts the production hostname, so deployments to a preview alias do not promote a release.
 4. Check the update button from an older copy. The installed version, SHA-256 digest, byte size and immutable Git revision must agree across the two release channels before installation. Keep the GitHub repository and Cloudflare production deployment restricted to trusted publishers.

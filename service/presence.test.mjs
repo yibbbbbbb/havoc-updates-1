@@ -54,6 +54,13 @@ test("authenticated, opt-in roster, unique machines, expiry, pagination and logo
     assert.equal(code,201);
     assert.deepEqual((await api("GET","members",a))[1],{members:[],next:null});
     assert.equal((await visible(a,"true"))[0],400);
+    const cutoff = Math.floor(Date.now()/1000) + 45;
+    assert.equal((await api("PUT","live",a,{visible:true,until:"tomorrow"}))[0],400);
+    assert.equal((await api("PUT","live",a,{visible:true,until:cutoff}))[0],200);
+    assert.equal(db.prepare("SELECT MAX(visible_until) AS n FROM presence_session").get().n,cutoff);
+    assert.deepEqual(await total(a),{count:1});
+    assert.equal((await api("PUT","live",a,{visible:true,until:cutoff-60}))[0],200);
+    assert.deepEqual(await total(a),{count:0});
     for (const token of [a,a2,b,c]) assert.equal((await visible(token,true))[0],200);
     assert.deepEqual(await total(a),{count:3});
     const roster = (await api("GET","members",a))[1];
@@ -96,4 +103,24 @@ test("unconfigured service and unrelated static assets", async () => {
     assert.equal(absent.status,503);
     const asset = await worker.fetch(new Request("https://app.test/desktop/stable.json"), {ASSETS:{fetch:()=>new Response("asset")}});
     assert.equal(await asset.text(),"asset");
+});
+
+test("old and new desktops receive compatible scheduled messages", async t => {
+    const start = Date.UTC(2026,10,19,14);
+    const end = start + 60000;
+    const feed = {message:"Default",schedule:[{start:new Date(start).toISOString(),
+        end:new Date(end).toISOString(),message:"Scheduled"}]};
+    const env = {ASSETS:{fetch:()=>Response.json(feed)}};
+    const url = "https://app.test/desktop/daily-message.json";
+    const clock = t.mock.method(Date,"now",()=>start);
+    for (const [now,message] of [[start-1,"Default"],[start,"Scheduled"],[end-1,"Scheduled"],[end,"Default"]]) {
+        clock.mock.mockImplementation(()=>now);
+        const r = await worker.fetch(new Request(url),env);
+        assert.deepEqual(await r.json(),{message});
+    }
+    const full = await worker.fetch(new Request(url+"?schedule=1"),env);
+    assert.deepEqual(await full.json(),feed);
+    const head = await worker.fetch(new Request(url,{method:"HEAD"}),env);
+    assert.equal(await head.text(),"");
+    assert.equal(head.status,200);
 });

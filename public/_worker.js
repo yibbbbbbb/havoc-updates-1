@@ -73,6 +73,15 @@ async function openSession(db, body, now) {
 export default {
     async fetch(request, env) {
         const url = new URL(request.url);
+        if (url.pathname === "/desktop/daily-message.json" && !url.searchParams.has("schedule") && ["GET","HEAD"].includes(request.method)) {
+            const response = await env.ASSETS.fetch(new Request(url, {method:"GET"}));
+            if (!response.ok) return response;
+            const feed = await response.json();
+            const now = Date.now();
+            const active = Array.isArray(feed.schedule) && feed.schedule.find(row => row && Date.parse(row.start) <= now && now < Date.parse(row.end));
+            const body = json(200,{message:active?.message ?? feed.message});
+            return request.method === "HEAD" ? new Response(null,{headers:body.headers}) : body;
+        }
         if (!url.pathname.startsWith(root)) return env.ASSETS.fetch(request);
         const route = url.pathname.slice(root.length);
         if (!["session","live","members","count"].includes(route)) return json(404,{error:"Unknown endpoint"});
@@ -99,8 +108,11 @@ export default {
                 try { body = await readJSON(request,512); } catch { return json(400,{error:"Invalid request"}); }
                 if (creating) return await openSession(db,body,now);
                 if (typeof body?.visible !== "boolean") return json(400,{error:"Visibility must be a boolean"});
+                if (body.until !== undefined && (!Number.isSafeInteger(body.until) || body.until < 0))
+                    return json(400,{error:"Invalid visibility deadline"});
+                const cutoff = Math.min(now + heartbeatTTL, body.until ?? now + heartbeatTTL);
                 await db.prepare("UPDATE presence_session SET visible_until=MIN(?,expires) WHERE token_hash=? AND expires>?")
-                        .bind(body.visible ? now+heartbeatTTL : 0,hash,now).run();
+                        .bind(body.visible ? cutoff : 0,hash,now).run();
                 return json(200,{ok:true});
             }
             if (route === "session") {
