@@ -92,6 +92,51 @@ class ReleasePreferencesTests(unittest.TestCase):
         self.assertEqual(p.preferences["colors"]["Havoc"], {"bg": (4, 5, 6)})
         self.assertEqual(p._preset_value("acc", (1, 2, 3), True), "#010203")
 
+    def test_changed_filter_retains_disabled_owner_and_only_changed_options(self):
+        panel = self.panel()
+        owner, options = next(
+            (parent, children)
+            for parent, children in panel.mod_groups
+            if parent and parent["name"] == "Name Tags"
+        )
+        field, untouched = options[:2]
+        changed = panel.values | {owner["key"]: False, field["key"]: field["max"]}
+        if changed[field["key"]] == field["value"]:
+            changed[field["key"]] = field["min"]
+
+        def results(mode, query=""):
+            return app.visible_groups(
+                panel.mod_groups, changed, owner["section"], query, (), mode
+            )
+
+        self.assertIn((owner, [field]), results("Changed", field["key"]))
+        self.assertNotIn((owner, [field]), results("Changed", untouched["key"]))
+        self.assertNotIn((owner, options), results("Enabled", owner["key"]))
+        changed[field["key"]] = field["value"]
+        self.assertFalse(results("Changed", field["key"]))
+
+    def test_midnight_collections_cover_all_original_pages_once(self):
+        panel = self.panel()
+        self.assertEqual(
+            panel.library_collections[0][1], ["All Mods", "Enabled Mods", "Favorites"]
+        )
+        pages = [
+            page
+            for _, collection in panel.library_collections[1:]
+            for page in collection
+        ]
+        self.assertEqual(len(pages), len(set(pages)))
+        self.assertEqual(
+            set(pages),
+            {
+                page
+                for title, group in app.COLLECTIONS
+                if title != "Workspace"
+                for page in group
+            },
+        )
+        self.assertTrue(all(row["section"] in pages for row in panel.schema))
+
     def test_report_only_includes_allowlisted_information(self):
         panel = self.panel()
         h = panel.headset

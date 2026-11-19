@@ -8,7 +8,11 @@ Save the Python file in a writable folder. On Windows, install the UI library wi
 
 Open **Home → Updates** or **Sign in → Release notes** and select **Check for updates**. When a newer release is available, **Install … and restart** downloads it, verifies it and restarts Havoc. Turn on **Check for updates on startup** to see a notice when a release is available. Installation always takes a click. The updater keeps the preceding file beside the desktop as `HavocMidnight.py.previous`. **Restore previous version and restart** checks that backup against the history of published releases before restoring it. Your workspace and preferences are stored separately.
 
-On **Connection**, expand **Connection diagnostics** and choose **Copy report**. The report includes the ADB state, device count, authorization state and suggested next step. It omits device names, addresses, account identifiers and raw error text.
+In Midnight, open **Library** and choose a collection, then a page. Wide windows show collection tabs and a page list. Compact windows use two selectors. On a control page, **All**, **Enabled** and **Changed** work alongside search. **Changed** includes edited options whose parent is off. Expand a mod’s summary to edit its options. Use **Reset** on an individual setting to restore its original value. Choosing a control in the command palette opens its group and highlights the exact row.
+
+On **Appearance**, the live sample stays above the scrolling settings. Try its button, toggle and slider in either layout. Smaller windows collapse the sample under **Live preview**.
+
+**Connection** shows the current headset state and the next step first. From there, expand **Connection diagnostics** and choose **Copy report**. The report includes the ADB state, device count, authorization state and suggested next step. It omits device names, addresses, account identifiers and raw error text.
 
 In **Presets** or **Appearance**, choose a preset and select **Preview** to review each change. **Apply preset** saves it. **Undo preset** reverses the last application in that category for the current session.
 

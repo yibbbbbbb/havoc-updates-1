@@ -13,7 +13,6 @@ import http.client
 import platform
 import uuid
 from importlib.util import find_spec
-from itertools import groupby
 import io
 import json
 import math
@@ -1554,31 +1553,6 @@ def bookmark(panel, saved, width):
             panel._border(dl, a, b, c["acc"])
     return pressed
 
-def control_grid(panel, groups):
-    """Columns hold contiguous groups in the order supplied by the installed library."""
-    width = imgui.get_content_region_avail().x
-    cols = len(groups) > 1 and width >= max(575 * panel.zoom, 38 * imgui.get_font_size())
-    if not cols or not imgui.begin_table(
-        "##library-grid", 2, imgui.TableFlags_.sizing_stretch_same | imgui.TableFlags_.no_saved_settings
-    ):
-        for primary, sliders in groups:
-            panel._control_group(primary, sliders)
-        return
-    weights = [1 + 2 * len(sliders) for _, sliders in groups]
-    target = sum(weights) / 2
-    total = 0
-    split = 1
-    best = float("inf")
-    for i, weight in enumerate(weights[:-1], 1):
-        total += weight
-        if abs(total - target) < best:
-            split, best = i, abs(total - target)
-    for column in (groups[:split], groups[split:]):
-        imgui.table_next_column()
-        for primary, sliders in column:
-            panel._control_group(primary, sliders)
-    imgui.end_table()
-
 def track(panel, dl, x0, x1, x, y, highlighted):
     z = panel.zoom
     c = inks(panel)
@@ -1728,7 +1702,10 @@ def _page(panel, c, now, page, notice):
         else:
             panel._key_screen()
     elif page == "Appearance":
-        _settings(panel, c)
+        panel._appearance_sample()
+        if imgui.begin_child("appearance-editor", V(0, 0)):
+            _settings(panel, c)
+        imgui.end_child()
     else:
         library = page not in ("Dashboard", "Connection", "Credits")
         w = imgui.get_content_region_avail().x
@@ -1737,19 +1714,18 @@ def _page(panel, c, now, page, notice):
             and prefs["sidebar"] != "Page selectors"
             and w >= (625 if prefs["sidebar"] == "Wide sidebar" else 825) * panel.zoom
         )
-        browsing = page == "All Mods" and getattr(panel, "_category_index", False)
-        if sidebar and not browsing:
+        if sidebar:
             imgui.push_style_color(imgui.Col_.child_bg, appearance.sidebar_color(panel))
             imgui.begin_child("library-navigation", V(panel._sidebar_width(w), 0), imgui.ChildFlags_.borders)
-            panel._library_navigation(compact=False)
+            _library_tabs(panel, compact=False)
             imgui.end_child()
             imgui.pop_style_color()
             imgui.same_line(0, 7 * panel.zoom)
         imgui.begin_child("page", V(0, 0))
         if changed_page:
             imgui.set_scroll_y(0)
-        if library and not sidebar and not browsing:
-            panel._library_navigation(compact=True)
+        if library and not sidebar:
+            _library_tabs(panel, compact=True)
         panel._controls()
         imgui.end_child()
     imgui.pop_id()
@@ -2024,7 +2000,6 @@ def workspace(panel, now, notice=None):
 midnight = SimpleNamespace(
     PALETTE=PALETTE,
     bookmark=bookmark,
-    control_grid=control_grid,
     heading=heading,
     index_row=index_row,
     opening_backdrop=opening_backdrop,
@@ -2384,7 +2359,7 @@ def organize_controls(schema):
             groups.append((item, children.get(item["key"], [])))
     return groups
 
-def visible_groups(groups, values, page, query, favorites):
+def visible_groups(groups, values, page, query, favorites, mode=None):
     words = query.casefold().split()
     result = []
     for primary, options in groups:
@@ -2392,29 +2367,33 @@ def visible_groups(groups, values, page, query, favorites):
         category = members[0]["section"]
         if page == "Favorites":
             visible = any(item["key"] in favorites for item in members)
-        elif page == "Enabled Mods":
-            visible = any(
-                item["type"] == "bool" and values.get(item["key"], item["value"])
-                for item in members
-            )
         else:
-            visible = page == "All Mods" or page == category
-        if visible and (
-            not words
-            or any(
-                all(
-                    word
-                    in (item["name"] + " " + category + " " + item["key"]).casefold()
-                    for word in words
-                )
-                for item in members
-            )
+            visible = page in ("All Mods", "Enabled Mods") or page == category
+        if not visible:
+            continue
+        if page == "Enabled Mods" and mode is None and not any(
+            item["type"] == "bool" and values.get(item["key"], item["value"]) for item in members
+        ):
+            continue
+        if mode == "Enabled" and not (
+            primary and primary["type"] == "bool" and values.get(primary["key"], primary["value"])
+        ):
+            continue
+        if mode == "Changed":
+            changed = [item for item in members if values.get(item["key"], item["value"]) != item["value"]]
+            if not changed:
+                continue
+            options = [item for item in options if item in changed]
+            members = ([primary] if primary else []) + options
+        if not words or any(
+            all(word in (item["name"] + " " + category + " " + item["key"]).casefold() for word in words)
+            for item in members
         ):
             result.append((primary, options))
     return result
 
 
-DESKTOP_RELEASE = "2026.11.25"
+DESKTOP_RELEASE = "2026.11.26"
 
 PAGES_ORIGIN = "https://havoc-midnight-preview.pages.dev"
 
@@ -2426,6 +2405,7 @@ TRUSTED_BACKUPS = {'1bf1f5a8fa870aac2241f5d98f117598fc0184fb241c27954de93d4b8db5
  '32d809bf673aa831017f842e2eb47f6b0df18d81756e29d66f9e2302269bd351': '2026.11.22',
  '746de88dcb7e1825dabb32c9b795c18a317ba1ab140af1396c73a50580def42a': '2026.11.19',
  '95f4b57201d0459085fb0f187d816dfa1149cea2516dfbb5c55389b3809a7cff': '2026.11.20',
+ '9776a7005417d94cee0664069bbc40e040915cba575ade273cda08964da35940': '2026.11.25',
  '9e2fa2d7a3f3e580c84f56c5b527e21a2b2755e0b305e4cab2dcb39944d0ef01': '2026.11.23',
  'baa25c8e47fb8bc6fe0f6e9acf52ea4b4d9bd8869975f79c55ec14c0890d0985': '2026.11.24'}  # Filled from the published stable release history during the build.
 
@@ -3051,8 +3031,8 @@ class HeadsetPanel:
         if device.state in ("unauthorized", "authorizing"):
             return (
                 "attention",
-                "Authorization needed",
-                "Unlock the headset and approve the debugging prompt.",
+                "Waiting for headset approval",
+                "Put on the headset and accept the USB debugging prompt.",
             )
         if device.state == "offline":
             return "attention", "Headset offline", "Reconnect the headset. Its status will update here."
@@ -3128,6 +3108,8 @@ class HeadsetPanel:
         imgui.text_wrapped(hint)
         imgui.spacing()
 
+    def _monitor_actions(self, panel):
+        z = panel.zoom
         active = self.phase in ("checking", "live")
         w = max(1, imgui.get_content_region_avail().x)
         gap = imgui.get_style().item_spacing.x
@@ -3152,6 +3134,7 @@ class HeadsetPanel:
                 panel.log("Headset monitor disconnected")
             if imgui.is_item_hovered():
                 imgui.set_tooltip("Close this device-status connection.")
+    def _device_choice(self, panel):
         if self.devices and (len(self.devices) > 1 or not self.selected()):
             labels = [
                 f"{d.model} · {d.serial}" if d.model and d.model != d.serial else d.serial
@@ -3280,18 +3263,19 @@ class HeadsetPanel:
         if spread:
             imgui.table_next_column()
         if standalone:
-            panel._poster("Workspace", "Connection", height=160 if spread else 94, motif="device")
-            imgui.spacing()
-            panel._section_caption("Session status")
+            panel._section_caption("Connection")
         self._status_card(panel)
-        if standalone:
-            if spread:
-                imgui.table_next_column()
-            else:
-                imgui.spacing()
-            self._checks(panel)
+        if self.phase != "live":
+            self._monitor_actions(panel)
         if spread:
+            imgui.table_next_column()
+            panel._poster("Workspace", "Connection", height=94, motif="device")
             imgui.end_table()
+        self._device_choice(panel)
+        if standalone:
+            self._checks(panel)
+        if self.phase == "live":
+            self._monitor_actions(panel)
         imgui.spacing()
         if standalone:
             panel._section_caption("Session details")
@@ -3351,6 +3335,7 @@ def page_filter(panel):
     changed, query = imgui.input_text_with_hint("##page-filter", "Filter this page…", panel.search)
     if changed:
         panel.search = query
+        panel._focus_key = None
     if panel.search:
         imgui.same_line()
         if imgui.button("Clear##filter"):
@@ -3459,6 +3444,52 @@ COLLECTIONS = (
     ("Utilities", ("Debug", "Soundboard", "Jump Speed Checker")),
     ("Workspace", ("Connection", "Appearance")),
 )
+def _library_tabs(panel, compact):
+    groups = panel.library_collections
+    index = next((i for i, (_, pages) in enumerate(groups) if panel.section in pages), 0)
+    width = imgui.get_content_region_avail().x
+    split = compact and width >= max(310*panel.zoom, 23*imgui.get_font_size())
+    gap = imgui.get_style().item_spacing.x
+    field = (width-gap)/2 if split else width
+    imgui.begin_group()
+    imgui.text_colored(inks(panel)["muted"], "Collection")
+    titles = [title for title, _ in groups]
+    tab_width = (field-gap)/2
+    use_tabs = not compact and tab_width >= max(imgui.calc_text_size(title).x for title in titles) + 14*panel.zoom
+    changed = False
+    if use_tabs:
+        for row, title in enumerate(titles):
+            if row % 2:
+                imgui.same_line(0, gap)
+            if panel._button(title+"##mod-collection", tab_width, 25, primary=row == index):
+                changed, index = row != index, row
+    else:
+        imgui.set_next_item_width(field)
+        changed, index = imgui.combo("##navgroup", index, titles)
+    pages = groups[index][1]
+    if changed:
+        panel._navigate(pages[0])
+    imgui.end_group()
+    if split:
+        imgui.same_line(0, gap)
+    if compact:
+        imgui.begin_group()
+        imgui.text_colored(inks(panel)["muted"], "Page")
+        imgui.set_next_item_width(field)
+        chosen, row = imgui.combo("##navpage", pages.index(panel.section), pages)
+        if chosen:
+            panel._navigate(pages[row])
+        imgui.end_group()
+    else:
+        panel._section_caption("Pages")
+        panel._update_library_counts()
+        for page in pages:
+            count = str(panel._nav_counts.get(page, 0)) if panel.preferences["counts"] else ""
+            if panel._index_row("##library-page/" + page, page, count, "library", selected=page == panel.section):
+                panel._navigate(page)
+    imgui.separator()
+
+
 class Navigation:
     VIRTUAL_PAGES = ("Dashboard", "All Mods", "Enabled Mods", "Favorites")
     HIDDEN_KEYS = frozenset()
@@ -3902,6 +3933,13 @@ class Panel:
         self._nav_counts = self._section_counts | {"All Mods": len(self.schema)}
         self._counts_dirty = True
         self.mod_groups = organize_controls(self.schema)
+        self._group_keys = {p["key"]: [p["key"], *(opt["key"] for opt in opts)] for p, opts in self.mod_groups if p}
+        self.library_collections = [("Library", ["All Mods", "Enabled Mods", "Favorites"])]
+        self.library_collections.extend((title, list(pages)) for title, pages in COLLECTIONS if title != "Workspace")
+        self.control_filter = "All"
+        self._expanded_mods, self._detail_heights = set(), {}
+        self._focus_key = self._focus_started = None
+        self._sample_on, self._sample_level = True, 65
         self._filter_scope, self._filter_opened = None, set()
         self.values = self._read_values(cfg.get("values"))
         self._state_due = None
@@ -3918,7 +3956,7 @@ class Panel:
         self.just_updated, self._show_logs = None, False
         self.changelog = {
             "title": "Havoc Midnight",
-            "notes": "Connection reports, preset previews and undo, verified rollback, scheduled messages, startup update checks and timed visibility are now available.",
+            "notes": "Midnight has organized collection tabs. Review changed settings, expand mod options, preview appearance changes and see the next headset step.",
         }
         self.headset = HeadsetPanel(self)
         self._audio = MenuAudio(ASSET_ROOT)
@@ -4004,6 +4042,9 @@ class Panel:
         self.headset.close()
         self._audio.stop_clip()
         self.account.clear()
+        self._expanded_mods.clear()
+        self.control_filter = "All"
+        self._focus_key = self._focus_started = None
         self._preset_preview.clear()
         self._preset_undo.clear()
         self.loglines.clear()
@@ -4286,22 +4327,53 @@ class Panel:
                 return
         else:
             self._page_heading("Local editor", _page_label(self.section), None)
+        if self.section not in nav.VIRTUAL_PAGES and not self._section_counts.get(self.section):
+            imgui.text_wrapped("This page gets its live controls from your installed Havoc runtime.")
+            if self.preferences["menu_layout"] != "Midnight":
+                self._related_pages()
+            self._session_tools()
+            return
+        modes = ("All", "Enabled", "Changed")
+        gap = imgui.get_style().item_spacing.x
+        available = imgui.get_content_region_avail().x
+        width = max(1, min(78*self.zoom, (available - 2*gap)/3))
+        inline = available >= 490*self.zoom and imgui.begin_table(
+            "search-and-filter", 2, imgui.TableFlags_.sizing_stretch_prop | imgui.TableFlags_.no_saved_settings)
+        if inline:
+            imgui.table_setup_column("Search", imgui.TableColumnFlags_.width_stretch)
+            imgui.table_setup_column("View", imgui.TableColumnFlags_.width_fixed, 3*width+2*gap)
+            imgui.table_next_column()
         page_filter(self)
-        scope = (self.section, self.search)
+        if inline:
+            imgui.table_next_column()
+        for i, mode in enumerate(modes):
+            if i:
+                imgui.same_line()
+            if self._button(mode+"##mod-filter", width, 26, primary=self.control_filter == mode):
+                if self.section == "Enabled Mods" and mode != "Enabled":
+                    self._navigate("All Mods", self.search)
+                self.control_filter = mode
+        if inline:
+            imgui.end_table()
+        scope = (self.section, self.search, self.control_filter)
         if self._filter_scope != scope:
             self._filter_scope = scope
             self._filter_opened.clear()
-        groups = visible_groups(self.mod_groups, self.values, self.section, self.search, self.favorites)
+        groups = visible_groups(self.mod_groups, self.values, self.section, self.search, self.favorites, self.control_filter)
         if not groups:
             if self.search:
-                imgui.text_wrapped("No controls match this filter.")
+                imgui.text_wrapped("No controls match this search and filter.")
+            elif self.control_filter == "Changed":
+                imgui.text_wrapped("All settings on this page are at their defaults.")
+            elif self.control_filter == "Enabled":
+                imgui.text_wrapped("No controls are enabled on this page.")
             elif self.section == "Favorites":
                 imgui.text_wrapped("Bookmark a mod in the library to find it here.")
             elif self.section == "Enabled Mods":
                 imgui.text_wrapped("Controls you enable in the desktop editor appear here.")
             else:
                 imgui.text_wrapped("This page gets its live controls from your installed Havoc runtime.")
-            if not self.search:
+            if not self.search and self.control_filter == "All" and self.preferences["menu_layout"] != "Midnight":
                 self._related_pages()
             self._session_tools()
             return
@@ -4313,25 +4385,14 @@ class Panel:
             imgui.push_id("category/" + origin)
             if self.section in nav.VIRTUAL_PAGES and imgui.small_button(_page_label(origin) + "  >"):
                 self._navigate(origin)
-            if self.preferences["menu_layout"] == "Midnight":
-                for wide, batch in groupby(related, key=lambda pair: len(pair[1]) > 1):
-                    batch = list(batch)
-                    if wide:
-                        for primary, options in batch:
-                            self._control_group(primary, options)
-                    else:
-                        anchor = batch[0][0] or batch[0][1][0]
-                        imgui.push_id("grid/" + anchor["key"])
-                        midnight.control_grid(self, batch)
-                        imgui.pop_id()
-            else:
-                for primary, options in related:
-                    self._control_group(primary, options)
+            for primary, options in related:
+                self._control_group(primary, options)
             imgui.pop_id()
             imgui.spacing()
         self._session_tools()
 
     def _draw_field(self, item, available=True):
+        imgui.begin_group()
         imgui.begin_disabled(not available or item.get("available") is False)
         if item.get("options"):
             self._enum_card(item)
@@ -4340,50 +4401,122 @@ class Panel:
         else:
             self._switch_card(item)
         imgui.end_disabled()
+        imgui.end_group()
+        if self._focus_key == item["key"]:
+            if self._focus_started is None:
+                self._focus_started = imgui.get_time()
+                self._focus_screen_y = (imgui.get_item_rect_min().y + imgui.get_item_rect_max().y)/2
+            elapsed = imgui.get_time() - self._focus_started
+            if elapsed < 1.2:
+                a, b = imgui.get_item_rect_min(), imgui.get_item_rect_max()
+                ink = imgui.get_style().color_(imgui.Col_.check_mark)
+                alpha = 1-elapsed/1.2 if self.ambient_motion and self.preferences["transition"] != "Instant" else 1
+                ink = ImVec4(ink.x, ink.y, ink.z, alpha)
+                imgui.get_window_draw_list().add_rect(a, b, imgui.get_color_u32(ink), 2, thickness=2)
+            else:
+                self._focus_key = None
+
 
     def _control_group(self, primary, options):
+        self._focus_screen_y = None
         anchor = primary or options[0]
         key = anchor["key"]
-        members = [primary, *options] if primary else options
-        keys = [item["key"] for item in members]
-        wide_group = primary is not None and len(options) > 1
+        keys = self._group_keys.get(key, [key])
         width = max(1, imgui.get_content_region_avail().x)
+        z = self.zoom
         compact = self.preferences["menu_layout"] == "Midnight"
-        bookmark = min(32*self.zoom, width*.23) if compact else min(width*.4, imgui.calc_text_size("+ Save mod").x+18)
+        bookmark = min(width*.30, 32*z if compact else imgui.calc_text_size("+ Save mod").x+18)
+        changed = self.values[key] != anchor["value"]
         imgui.push_id("group_" + key)
-        table = width > bookmark + 72*self.zoom and imgui.begin_table(
-            "edit", 2, imgui.TableFlags_.no_saved_settings | imgui.TableFlags_.borders_outer)
+        table = imgui.begin_table("edit", 2, imgui.TableFlags_.no_saved_settings | imgui.TableFlags_.borders_inner_h)
         if table:
             imgui.table_setup_column("Control", imgui.TableColumnFlags_.width_stretch)
-            imgui.table_setup_column("Favorite", imgui.TableColumnFlags_.width_fixed, bookmark)
+            imgui.table_setup_column("Actions", imgui.TableColumnFlags_.width_fixed, max(bookmark, imgui.calc_text_size("Reset").x+12))
             imgui.table_next_column()
-        for item in ([primary] if wide_group else members):
-            self._draw_field(item, anchor.get("available") is not False)
-        if table:
+            self._draw_field(anchor)
+            if primary and options:
+                self._option_details(primary, options)
             imgui.table_next_column()
-        self._bookmark(key, keys, not set(keys).isdisjoint(self.favorites), bookmark)
-        if table:
+            self._bookmark(key, keys, not set(keys).isdisjoint(self.favorites), bookmark)
+            if changed and anchor["type"] != "number" and imgui.small_button("Reset##"+key):
+                self.push(key, anchor["value"])
             imgui.end_table()
-        if wide_group:
-            if self.search and key not in self._filter_opened:
-                imgui.set_next_item_open(True)
-                self._filter_opened.add(key)
-            if imgui.collapsing_header(f"Settings ({len(options)})###mod-options"):
-                split = width >= max(540*self.zoom, 34*imgui.get_font_size()) and imgui.begin_table(
-                    "options", 2, imgui.TableFlags_.sizing_stretch_same | imgui.TableFlags_.no_saved_settings)
-                for item in options:
-                    if split:
-                        imgui.table_next_column()
-                    self._draw_field(item, anchor.get("available") is not False)
-                if split:
-                    imgui.end_table()
+        if self._focus_screen_y is not None:
+            imgui.set_scroll_from_pos_y(self._focus_screen_y - imgui.get_window_pos().y, 0.45)
+        imgui.separator()
         imgui.pop_id()
+
+    def _option_details(self, primary, options):
+        key = primary["key"]
+        if (self.search or self.control_filter == "Changed") and key not in self._filter_opened:
+            self._expanded_mods.add(key)
+            self._filter_opened.add(key)
+        opened = key in self._expanded_mods
+        head = options[0]
+        value = self._preset_value(head["key"], self.values[head["key"]], False)
+        summary = f"{head['name']} {value}"
+        if len(options) > 1:
+            summary += f"  ·  {len(options)} settings"
+        width = max(1, imgui.get_content_region_avail().x)
+        caption = ("−  " if opened else "+  ") + summary
+        if imgui.button(self._fit_label(caption, max(1,width-14))+"###mod-options", ImVec2(width, 0)):
+            opened = not opened
+            if opened:
+                self._expanded_mods.add(key)
+            else:
+                self._expanded_mods.discard(key)
+        if imgui.is_item_hovered():
+            imgui.set_tooltip(summary)
+        focused = any(item["key"] == self._focus_key for item in options)
+        if focused and self._focus_started is None:
+            imgui.set_scroll_here_y(0.25)
+        # Exact search results and reduced-motion layouts open immediately.
+        fraction = (float(opened) if focused or not self.ambient_motion or self.preferences["transition"] == "Instant"
+                    else self._animate("reveal", opened, 0, 24))
+        if fraction < 0.01:
+            return
+        natural = self._detail_heights.get(key, len(options)*max(80*self.zoom, imgui.get_frame_height()*3))
+        flags = imgui.WindowFlags_.no_scrollbar | imgui.WindowFlags_.no_scroll_with_mouse
+        if imgui.begin_child("options", ImVec2(width, max(1, math.ceil(natural*fraction))), 0, flags):
+            imgui.begin_group()
+            imgui.begin_disabled(fraction < .95)
+            for item in options:
+                self._draw_field(item, primary.get("available") is not False)
+                if item["type"] != "number" and self.values[item["key"]] != item["value"]:
+                    if imgui.small_button("Reset##"+item["key"]):
+                        self.push(item["key"], item["value"])
+            imgui.end_disabled()
+            imgui.end_group()
+            self._detail_heights[key] = imgui.get_item_rect_size().y + 2*imgui.get_style().window_padding.y + 2
+        imgui.end_child()
+
+    def _appearance_sample(self):
+        width = imgui.get_content_region_avail().x
+        narrow = width < max(375*self.zoom, 26*imgui.get_font_size())
+        if narrow and not imgui.collapsing_header("Live preview"):
+            return
+        if not narrow:
+            self._section_caption("Live preview")
+        if imgui.begin_table("preview-controls", 3, imgui.TableFlags_.sizing_stretch_same | imgui.TableFlags_.no_saved_settings):
+            imgui.table_next_column()
+            if self._button("Test sound", imgui.get_content_region_avail().x, 26, primary=True):
+                self._cue("click")
+            imgui.table_next_column()
+            if self._switch_face("preview-toggle", "Toggle", self._sample_on):
+                self._sample_on = not self._sample_on
+            imgui.table_next_column()
+            imgui.set_next_item_width(-1)
+            _, self._sample_level = imgui.slider_int("##preview-level", self._sample_level, 0, 100, "%d%%")
+            if imgui.is_item_hovered():
+                imgui.set_tooltip("Sample slider")
+            imgui.end_table()
+        imgui.separator()
 
     def _update_library_counts(self):
         if self._counts_dirty:
             self._nav_counts["Favorites"] = len(self.favorites)
             self._nav_counts["Enabled Mods"] = sum(
-                self.values[item["key"]] for item in self.schema if item["type"] == "bool"
+                self.values[item["key"]] for item, _ in self.mod_groups if item and item["type"] == "bool"
             )
             self._counts_dirty = False
 
@@ -5089,6 +5222,9 @@ class Panel:
         if not self.workspace_open:
             return
         self._category_index = False
+        self.control_filter = "Enabled" if section == "Enabled Mods" else "All"
+        self._focus_key = query if query in self.values else None
+        self._focus_started = None
         if section != self.section:
             self._section_at = imgui.get_time()
             self._expanded_group = next((name for name, pages in nav.navigation_groups(self.schema)
@@ -6021,31 +6157,34 @@ class Panel:
         return color, changed
 
     def _appearance(self):
-        w = imgui.get_content_region_avail().x
-        self._banner("Panel", "Appearance", illustrated=False)
-        columns = w >= 780 * self.zoom and imgui.begin_table("appearance-spread", 2, imgui.TableFlags_.no_saved_settings)
-        if columns:
-            imgui.table_setup_column("Palettes", imgui.TableColumnFlags_.width_stretch, 0.84)
-            imgui.table_setup_column("Settings", imgui.TableColumnFlags_.width_stretch, 1.16)
-            imgui.table_next_column()
-            self._section_caption("Color palette")
-            self._palette_shelf()
-            if THEME == "Custom" and imgui.collapsing_header("Custom palette"):
-                self._custom_palette_controls()
-            imgui.spacing()
-            appearance.presets(self)
-            imgui.table_next_column()
-            self._poster("Palette preview", THEME, height=104)
-        else:
-            self._poster("Palette preview", THEME, height=95)
-            if imgui.collapsing_header("Palettes and presets"):
+        self._appearance_sample()
+        if imgui.begin_child("appearance-editor", ImVec2(0, 0)):
+            w = imgui.get_content_region_avail().x
+            self._banner("Panel", "Appearance", illustrated=False)
+            columns = w >= 780 * self.zoom and imgui.begin_table("appearance-spread", 2, imgui.TableFlags_.no_saved_settings)
+            if columns:
+                imgui.table_setup_column("Palettes", imgui.TableColumnFlags_.width_stretch, 0.84)
+                imgui.table_setup_column("Settings", imgui.TableColumnFlags_.width_stretch, 1.16)
+                imgui.table_next_column()
+                self._section_caption("Color palette")
                 self._palette_shelf()
-                if THEME == "Custom":
+                if THEME == "Custom" and imgui.collapsing_header("Custom palette"):
                     self._custom_palette_controls()
+                imgui.spacing()
                 appearance.presets(self)
-        appearance.editor(self)
-        if columns:
-            imgui.end_table()
+                imgui.table_next_column()
+                self._poster("Palette preview", THEME, height=104)
+            else:
+                self._poster("Palette preview", THEME, height=95)
+                if imgui.collapsing_header("Palettes and presets"):
+                    self._palette_shelf()
+                    if THEME == "Custom":
+                        self._custom_palette_controls()
+                    appearance.presets(self)
+            appearance.editor(self)
+            if columns:
+                imgui.end_table()
+        imgui.end_child()
 
     def _palette_shelf(self):
         w = max(1, imgui.get_content_region_avail().x)
