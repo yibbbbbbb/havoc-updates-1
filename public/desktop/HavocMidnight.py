@@ -2407,7 +2407,7 @@ def visible_groups(groups, values, page, query, favorites):
     return result
 
 
-DESKTOP_RELEASE = "2026.11.21"
+DESKTOP_RELEASE = "2026.11.22"
 
 PAGES_ORIGIN = "https://havoc-midnight-preview.pages.dev"
 
@@ -3679,7 +3679,7 @@ class Panel:
         self.just_updated, self._show_logs = None, False
         self.changelog = {
             "title": "Havoc Midnight",
-            "notes": "Updated the in-app credit to “made by biggy, dodo”.",
+            "notes": "Updater test release. This is build 2026.11.22.",
         }
         self.headset = HeadsetPanel(self)
         self._audio = MenuAudio(ASSET_ROOT)
