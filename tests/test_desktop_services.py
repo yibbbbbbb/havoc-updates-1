@@ -260,6 +260,46 @@ class OnlineDeskTests(unittest.TestCase):
         ):
             app.online_roster("t")
 
+    def test_rejected_renewal_backs_off_and_manual_retry_recovers(self):
+        tokens = []
+        reject = threading.Event()
+
+        def api(route, method="GET", token=None, body=None):
+            if route == "session" and method == "POST":
+                issued = str(len(tokens) + 1) * 64
+                tokens.append(issued)
+                return {"token": issued}
+            if reject.is_set() and route != "session":
+                error = PermissionError("Expired session")
+                error.code = 401
+                raise app.DesktopServiceError("Session expired") from error
+            if route == "count":
+                return {"count": 0}
+            if route == "members":
+                return {"members": [], "next": None}
+            return {"ok": True}
+
+        with patch.object(app, "presence_request", side_effect=api):
+            online = app.OnlineSession()
+            try:
+                online.set_interest(False, False, watch=True)
+                until(lambda: online.count == 0)
+                reject.set()
+                online.set_interest(False, True, watch=True)
+                until(lambda: online.retry_available)
+                self.assertEqual(len(tokens), 2)
+                self.assertIsNone(online.count)
+                reject.clear()
+                online.retry_now()
+                online.retry_now()
+                until(lambda: online.snapshot[1] == ())
+                self.assertEqual(len(tokens), 3)
+                self.assertEqual(online.count, 0)
+                self.assertFalse(online.retry_available)
+            finally:
+                online.close()
+                online.thread.join(1)
+
     def test_outage_never_becomes_empty_online_list(self):
         with patch.object(
             app, "presence_request", side_effect=app.DesktopServiceError("offline")

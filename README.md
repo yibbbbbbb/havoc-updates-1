@@ -8,7 +8,7 @@ Save the Python file in a writable folder. On Windows, install the UI library wi
 
 Open **Home → Updates** or **Sign in → Release notes** and select **Check for updates**. When a newer release is available, **Install … and restart** downloads it, verifies it and restarts Havoc. The preceding file is saved beside the desktop as `HavocMidnight.py.previous`.
 
-The green dot in the bottom-left status bar shows how many verified users are sharing their presence. It refreshes every 30 seconds. A gray dot and a dash mean a current count is unavailable. Select the count or open **Home → Who's online** to view the names shared by verified Havoc desktop users. **Show me online** starts sharing your verified display name. Visibility starts off. An explicit logout clears the saved choice. Normal exits send a best-effort sign-out. An interrupted connection expires after at most 100 seconds. An unreachable service shows a retry message.
+The green dot in the bottom-left status bar shows how many verified users are sharing their presence. It refreshes every 30 seconds. A gray dot and a dash mean a current count is unavailable. Select the count or open **Home → Who's online** to view the names shared by verified Havoc desktop users. **Show me online** starts sharing your verified display name. Visibility starts off. An explicit logout clears the saved choice. Normal exits send a best-effort sign-out. An interrupted connection expires after at most 100 seconds. If the service is unreachable, the desktop retries automatically. Select **Retry connection** in the online list to try immediately.
 
 [Online list with two local test accounts](previews/online-test-accounts.png) · [Update offered to an older desktop copy](previews/desktop-update.png)
 
@@ -21,7 +21,7 @@ The green dot in the bottom-left status bar shows how many verified users are sh
 
 ## Online service
 
-The Pages Worker serves `/api/presence/*`. It uses the `PRESENCE` D1 binding. For an approved deployment, apply `service/presence.sql` to the presence database, bind it as `PRESENCE` in the Pages production settings and redeploy. The API returns HTTP 503 while the binding is absent.
+The production Pages Worker serves `/api/presence/*` using the `PRESENCE` binding to `havoc-midnight-presence`. For an approved deployment, apply `service/presence.sql` to the presence database, bind it as `PRESENCE` in the Pages production settings and redeploy. The API returns HTTP 503 while the binding is absent.
 
 The Worker verifies the same machine identity used for Havoc sign-in. It never stores raw machine IDs or IP addresses in the presence database. It keeps a keyed member identifier to count multiple desktop windows once, a hash of the temporary bearer token, the verified display name and expiration times. The roster exposes only display names and temporary row IDs to verified clients. Sessions expire after 15 minutes, expired rows are discarded on the next verified session creation, and logout deletes that session. Machine verification data and bearer tokens belong exclusively in HTTPS request bodies or headers.
 

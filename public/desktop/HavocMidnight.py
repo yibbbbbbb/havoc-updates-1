@@ -2407,7 +2407,7 @@ def visible_groups(groups, values, page, query, favorites):
     return result
 
 
-DESKTOP_RELEASE = "2026.11.22"
+DESKTOP_RELEASE = "2026.11.23"
 
 PAGES_ORIGIN = "https://havoc-midnight-preview.pages.dev"
 
@@ -2715,6 +2715,7 @@ class OnlineSession:
         self.desired = (False, False, False)
         self.revision = 0
         self.ended = False
+        self.retry_available = False
         self.thread = None
         self.snapshot = ("", None)
         self._count = (None, 0)
@@ -2729,6 +2730,7 @@ class OnlineSession:
             if self.ended or (share, view, watch) == self.desired:
                 return
             self.desired = (share, view, watch)
+            self.retry_available = False
             if not any(self.desired):
                 self._count = (None, 0)
             self.revision += 1
@@ -2748,9 +2750,19 @@ class OnlineSession:
                     self.snapshot = ("Could not start the online list.", None)
             self.cv.notify_all()
 
+    def retry_now(self):
+        with self.cv:
+            if self.ended or not self.retry_available:
+                return
+            self.retry_available = False
+            self.snapshot = ("Refreshing online status…", None)
+            self.revision += 1
+            self.cv.notify_all()
+
     def close(self):
         with self.cv:
             self.ended = True
+            self.retry_available = False
             self.revision += 1
             self.snapshot = ("", None)
             self._count = (None, 0)
@@ -2777,6 +2789,8 @@ class OnlineSession:
                     rev = self.revision
                 delay = None
                 if share or view or watch:
+                    had_token = token is not None
+                    failed = False
                     try:
                         if token is None:
                             primary, legacy = machine_ids()
@@ -2823,10 +2837,14 @@ class OnlineSession:
                     ) as exc:
                         count = None
                         status = getattr(exc.__cause__, "code", None)
-                        if status == 401 and token:
-                            token, delay = None, 0
-                        else:
-                            delay, retry = retry, min(retry * 2, 60)
+                        failed = True
+                        delay = retry
+                        if status == 401:
+                            token = None
+                            if had_token:
+                                delay = 0  # Renew a previously established session once immediately.
+                        if delay:
+                            retry = min(retry * 2, 60)
                         result = (
                             "Online list unavailable. Retrying automatically.",
                             None,
@@ -2844,6 +2862,7 @@ class OnlineSession:
                     with self.cv:
                         if self.revision == rev:
                             self.snapshot = result
+                            self.retry_available = failed and delay > 0
                             self._count = (count, time.time())
                 else:
                     self._leave(token)
@@ -3679,7 +3698,7 @@ class Panel:
         self.just_updated, self._show_logs = None, False
         self.changelog = {
             "title": "Havoc Midnight",
-            "notes": "Updater test release. This is build 2026.11.22.",
+            "notes": "Online presence is connected. Open Who’s online to see the shared roster or retry a failed connection.",
         }
         self.headset = HeadsetPanel(self)
         self._audio = MenuAudio(ASSET_ROOT)
@@ -3841,6 +3860,8 @@ class Panel:
         status, names = self.online.snapshot
         if status:
             imgui.text_wrapped(status)
+        if self.online.retry_available and self._button("Retry connection", min(width, 180*self.zoom), 30):
+            self.online.retry_now()
         if names is not None:
             if not names:
                 imgui.text_disabled("Nobody is sharing right now.")
