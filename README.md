@@ -8,7 +8,7 @@ Save the Python file in a writable folder. On Windows, install the UI library wi
 
 Open **Home → Updates** or **Sign in → Release notes** and select **Check for updates**. When a newer release is available, **Install … and restart** downloads it, verifies it and restarts Havoc. The preceding file is saved beside the desktop as `HavocMidnight.py.previous`.
 
-Open **Home → Who's online** to view the names shared by verified Havoc desktop users. **Show me online** starts sharing your verified display name. Visibility starts off. An explicit logout clears the saved choice. Normal exits send a best-effort sign-out. An interrupted connection expires after at most 100 seconds. An unreachable service shows a retry message.
+The green dot in the bottom-left status bar shows how many verified users are sharing their presence. It refreshes every 30 seconds. A gray dot and a dash mean a current count is unavailable. Select the count or open **Home → Who's online** to view the names shared by verified Havoc desktop users. **Show me online** starts sharing your verified display name. Visibility starts off. An explicit logout clears the saved choice. Normal exits send a best-effort sign-out. An interrupted connection expires after at most 100 seconds. An unreachable service shows a retry message.
 
 [Online list with two local test accounts](previews/online-test-accounts.png) · [Update offered to an older desktop copy](previews/desktop-update.png)
 

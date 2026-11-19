@@ -38,6 +38,8 @@ test("authenticated, opt-in roster, unique machines, expiry, pagination and logo
         assert.equal(r.headers.get("cache-control"),"private, no-store");
         return [r.status,await r.json()];
     }
+    const total = async token => (await api("GET","count",token))[1];
+    assert.equal((await api("GET","count"))[0],401);
     const make = (id,legacy=id) => api("POST","session",null,{hwid:id,hwidLegacy:legacy,name:"Impersonator"});
     const visible = (token,on) => api("PUT","live",token,{visible:on});
     assert.equal((await api("GET","members"))[0],401);
@@ -53,22 +55,26 @@ test("authenticated, opt-in roster, unique machines, expiry, pagination and logo
     assert.deepEqual((await api("GET","members",a))[1],{members:[],next:null});
     assert.equal((await visible(a,"true"))[0],400);
     for (const token of [a,a2,b,c]) assert.equal((await visible(token,true))[0],200);
+    assert.deepEqual(await total(a),{count:3});
     const roster = (await api("GET","members",a))[1];
     assert.deepEqual(roster.members.map(x=>x.name).sort(),["Ada","Ada","Ben"]);
     assert.deepEqual(Object.keys(roster.members[0]).sort(),["id","name"]);
     const stored = JSON.stringify(db.prepare("SELECT * FROM presence_session").all());
     for (const value of [a,b,"a".repeat(16),"b".repeat(16)]) assert.ok(!stored.includes(value));
     await visible(b,false);
+    assert.deepEqual(await total(b),{count:2});
     assert.equal((await api("GET","members",b))[1].members.length,2);
     await api("DELETE","session",a);
     assert.equal((await api("GET","members",a))[0],401);
     db.exec("UPDATE presence_session SET visible_until=1");
     assert.equal((await api("GET","members",b))[1].members.length,0);
+    assert.deepEqual(await total(b),{count:0});
     const insert = db.prepare("INSERT INTO presence_session VALUES(?,?,?,?,?)");
     for(let i=0;i<206;i++) {
         const id=i.toString(16).padStart(24,"0");
         insert.run(id+"d".repeat(40),"member"+i,"Person "+i,9999999999,9999999999);
     }
+    assert.deepEqual(await total(b),{count:206});
     let route="members", rows=[];
     do {
         const [status,page] = await api("GET",route,b);

@@ -75,8 +75,8 @@ export default {
         const url = new URL(request.url);
         if (!url.pathname.startsWith(root)) return env.ASSETS.fetch(request);
         const route = url.pathname.slice(root.length);
-        if (!["session","live","members"].includes(route)) return json(404,{error:"Unknown endpoint"});
-        const allowed = {session:["POST","DELETE"],live:["PUT"],members:["GET"]}[route];
+        if (!["session","live","members","count"].includes(route)) return json(404,{error:"Unknown endpoint"});
+        const allowed = {session:["POST","DELETE"],live:["PUT"],members:["GET"],count:["GET"]}[route];
         if (!allowed.includes(request.method)) return json(405,{error:"Method unavailable"});
         const origin = request.headers.get("Origin");
         if (origin && origin !== url.origin) return json(403,{error:"Origin rejected"});
@@ -106,6 +106,11 @@ export default {
             if (route === "session") {
                 await db.prepare("DELETE FROM presence_session WHERE token_hash=?").bind(hash).run();
                 return json(200,{ok:true});
+            }
+            if (route === "count") {
+                const row = await db.prepare("SELECT COUNT(DISTINCT member) AS count FROM presence_session WHERE visible_until>? AND expires>?")
+                                    .bind(now,now).first();
+                return json(200,{count:row.count});
             }
             const after = url.searchParams.get("after") || "";
             if (after && !/^[0-9a-f]{24}$/.test(after)) return json(400,{error:"Invalid cursor"});

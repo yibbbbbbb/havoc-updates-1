@@ -144,6 +144,48 @@ def until(check):
 
 
 class OnlineDeskTests(unittest.TestCase):
+    def test_footer_refreshes_total_without_fetching_names_or_sharing(self):
+        calls = []
+
+        def api(route, *args, **kwargs):
+            calls.append(route)
+            if route == "session":
+                return {"token": "d" * 64}
+            if route == "members":
+                return {"members": [], "next": None}
+            if route == "count":
+                return {"count": 3}
+            return {"ok": True}
+
+        with patch.object(app, "presence_request", side_effect=api):
+            online = app.OnlineSession()
+            online.set_interest(False, False, watch=True)
+            try:
+                until(lambda: online.count == 3)
+                self.assertEqual(calls, ["session", "count"])
+                with patch.object(app.time, "time", return_value=time.time() + 101):
+                    self.assertIsNone(online.count)
+                online.set_interest(False, True, watch=True)
+                until(lambda: online.count == 0 and online.snapshot[1] == ())
+                self.assertEqual(calls.count("count"), 1)
+            finally:
+                online.close()
+                online.thread.join(1)
+            self.assertIsNone(online.count)
+
+    def test_footer_rejects_invalid_totals(self):
+        with patch.object(
+            app,
+            "presence_request",
+            side_effect=[{"token": "d" * 64}, {"count": False}, {"ok": True}],
+        ):
+            online = app.OnlineSession()
+            online.set_interest(False, False, watch=True)
+            until(lambda: "unavailable" in online.snapshot[0])
+            self.assertIsNone(online.count)
+            online.close()
+            online.thread.join(1)
+
     def test_private_default_share_hide_and_logout(self):
         calls = []
         token = "d" * 64

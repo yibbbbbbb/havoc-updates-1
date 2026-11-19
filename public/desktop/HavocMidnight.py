@@ -1785,9 +1785,6 @@ def _utilities(panel, c, actions, positions):
                 panel.midnight_tab = "Controls"
             if imgui.menu_item("Use Classic layout", "", False)[0]:
                 panel._set_visual("menu_layout", "Classic")
-            if panel.section == "Appearance":
-                imgui.separator()
-                panel._footer()
             imgui.separator()
         if panel.changelog and imgui.menu_item("Release notes", "", False)[0]:
             panel._show_logs = True
@@ -1984,16 +1981,7 @@ def workspace(panel, now, notice=None):
         page = panel.section
     elif notice is None:
         page = "Credits" if panel._signed_out_credits else "Sign in"
-    if private and page == "Appearance":
-        tab_h = imgui.get_frame_height() + 7 * z
-        if narrow:
-            imgui.set_cursor_screen_pos(a_body)
-            a_body = V(a_body.x, a_body.y + tab_h)
-        else:
-            b_body = V(b_body.x, b_body.y - tab_h)
-            imgui.set_cursor_screen_pos(V(a_body.x, b_body.y + 3 * z))
-        _tabs(panel, c)
-    elif private:
+    if private:
         # Keep status and local presets in reach while the page itself scrolls.
         footer_h = max(37 * z, imgui.get_frame_height() + 10 * z) + imgui.get_style().item_spacing.y
         imgui.set_cursor_screen_pos(V(a_body.x, b_body.y - footer_h))
@@ -2006,6 +1994,15 @@ def workspace(panel, now, notice=None):
             panel._footer()
         imgui.end_child()
         b_body = V(b_body.x, b_body.y - footer_h - 3 * z)
+    if private and page == "Appearance":
+        tab_h = imgui.get_frame_height() + 7 * z
+        if narrow:
+            imgui.set_cursor_screen_pos(a_body)
+            a_body = V(a_body.x, a_body.y + tab_h)
+        else:
+            b_body = V(b_body.x, b_body.y - tab_h)
+            imgui.set_cursor_screen_pos(V(a_body.x, b_body.y + 3 * z))
+        _tabs(panel, c)
     imgui.set_cursor_screen_pos(a_body)
     imgui.begin_child("midnight-body", V(max(1, b_body.x - a_body.x), max(1, b_body.y - a_body.y)))
     _page(panel, c, now, page, notice)
@@ -2410,7 +2407,7 @@ def visible_groups(groups, values, page, query, favorites):
     return result
 
 
-DESKTOP_RELEASE = "2026.11.19"
+DESKTOP_RELEASE = "2026.11.20"
 
 PAGES_ORIGIN = "https://havoc-midnight-preview.pages.dev"
 
@@ -2715,20 +2712,31 @@ class OnlineSession:
 
     def __init__(self):
         self.cv = threading.Condition()
-        self.desired = (False, False)
+        self.desired = (False, False, False)
         self.revision = 0
         self.ended = False
         self.thread = None
         self.snapshot = ("", None)
+        self._count = (None, 0)
 
-    def set_interest(self, share, view):
+    @property
+    def count(self):
+        value, checked = self._count
+        return value if 0 <= time.time() - checked < 75 else None
+
+    def set_interest(self, share, view, *, watch=False):
         with self.cv:
-            if self.ended or (share, view) == self.desired:
+            if self.ended or (share, view, watch) == self.desired:
                 return
-            self.desired = (share, view)
+            self.desired = (share, view, watch)
+            if not any(self.desired):
+                self._count = (None, 0)
             self.revision += 1
-            self.snapshot = ("Refreshing online status…" if share or view else "", None)
-            if self.thread is None and (share or view):
+            self.snapshot = (
+                "Refreshing online status…" if any(self.desired) else "",
+                None,
+            )
+            if self.thread is None and any(self.desired):
                 self.thread = threading.Thread(
                     target=self._run, daemon=True, name="havoc-online"
                 )
@@ -2736,7 +2744,7 @@ class OnlineSession:
                     self.thread.start()
                 except RuntimeError:
                     self.thread = None
-                    self.desired = (False, False)
+                    self.desired = (False, False, False)
                     self.snapshot = ("Could not start the online list.", None)
             self.cv.notify_all()
 
@@ -2745,6 +2753,7 @@ class OnlineSession:
             self.ended = True
             self.revision += 1
             self.snapshot = ("", None)
+            self._count = (None, 0)
             self.cv.notify_all()
 
     @staticmethod
@@ -2758,15 +2767,16 @@ class OnlineSession:
     def _run(self):
         token = None
         retry = 5
+        was_sharing = False
         try:
             while True:
                 with self.cv:
                     if self.ended:
                         return
-                    share, view = self.desired
+                    share, view, watch = self.desired
                     rev = self.revision
                 delay = None
-                if share or view:
+                if share or view or watch:
                     try:
                         if token is None:
                             primary, legacy = machine_ids()
@@ -2783,12 +2793,20 @@ class OnlineSession:
                         with self.cv:
                             if self.revision != rev:
                                 continue
-                        presence_request("live", "PUT", token, {"visible": share})
+                        if share or view or was_sharing:
+                            was_sharing = share or was_sharing
+                            presence_request("live", "PUT", token, {"visible": share})
+                            was_sharing = share
                         names = (
                             online_roster(token, lambda rev=rev: self.revision == rev)
                             if view
                             else None
                         )
+                        count = len(names) if names is not None else None
+                        if watch and not view:
+                            count = presence_request("count", token=token)["count"]
+                            if type(count) is not int or count < 0:
+                                raise ValueError("Invalid online count")
                         result = (
                             "Your name is visible."
                             if share
@@ -2803,6 +2821,7 @@ class OnlineSession:
                         KeyError,
                         TypeError,
                     ) as exc:
+                        count = None
                         status = getattr(exc.__cause__, "code", None)
                         if status == 401 and token:
                             token, delay = None, 0
@@ -2825,9 +2844,10 @@ class OnlineSession:
                     with self.cv:
                         if self.revision == rev:
                             self.snapshot = result
+                            self._count = (count, time.time())
                 else:
                     self._leave(token)
-                    token, retry = None, 5
+                    token, retry, was_sharing = None, 5, False
                 with self.cv:
                     self.cv.wait_for(
                         lambda rev=rev: self.ended or self.revision != rev,
@@ -3659,7 +3679,7 @@ class Panel:
         self.just_updated, self._show_logs = None, False
         self.changelog = {
             "title": "Havoc Midnight",
-            "notes": "Home now shows the opt-in online list. Check for a new desktop release here and install it from Havoc.",
+            "notes": "The bottom-left status bar now shows how many people are sharing their presence. Select the count to open Who’s online.",
         }
         self.headset = HeadsetPanel(self)
         self._audio = MenuAudio(ASSET_ROOT)
@@ -3766,7 +3786,36 @@ class Panel:
             self._request_close()
         if self.workspace_open:
             viewing = self.section == "Dashboard" and self._online_open and not self._show_logs
-            self.online.set_interest(self._share_online, viewing)
+            self.online.set_interest(self._share_online, viewing, watch=True)
+
+    def _footer_status(self, width):
+        if width <= 1:
+            return
+        count = self.online.count
+        label = f"{count:,} online" if count is not None else "Online —"
+        z = self.zoom
+        height = 32 * z
+        label = self._fit_label(label, max(1, width - 19*z))
+        badge = min(width, imgui.calc_text_size(label).x + 19*z)
+        p = imgui.get_cursor_screen_pos()
+        clicked = imgui.invisible_button("##online-count", ImVec2(badge, height), imgui.ButtonFlags_.enable_nav)
+        dl, color = imgui.get_window_draw_list(), imgui.get_color_u32
+        center = ImVec2(p.x + 6*z, p.y + height/2)
+        ink = ImVec4(0.35, 0.87, 0.52, 1) if count is not None else FAINT
+        dl.add_circle_filled(center, 3.5*z, color(ink), 16)
+        y = center.y - imgui.get_font_size()/2
+        dl.add_text(ImVec2(p.x + 16*z, y), color(TEXT), label)
+        lines = str(self.msg).splitlines()
+        message = lines[-1] if lines else ""
+        room = width - badge - 16*z
+        if room > 48*z and message:
+            dl.add_text(ImVec2(p.x + badge + 10*z, y), color(MUTED), self._fit_label(message, room))
+        if imgui.is_item_hovered() or imgui.is_item_focused():
+            detail = "People sharing their presence in Havoc." if count is not None else (self.online.snapshot[0] or "Checking online status…")
+            imgui.set_tooltip(detail + "\nOpen Who’s online" + ("\n" + message if message else ""))
+        if clicked:
+            self._navigate("Dashboard")
+            self._online_open = self._reveal_online = True
 
     def _home_services(self):
         width = max(1, imgui.get_content_region_avail().x)
@@ -3776,6 +3825,9 @@ class Panel:
         imgui.same_line()
         if self._button("Updates", half, 30):
             self._show_logs = True
+        if getattr(self, "_reveal_online", False):
+            imgui.set_scroll_here_y(0.03)
+            self._reveal_online = False
         if not self._online_open:
             return
         imgui.spacing()
@@ -3785,7 +3837,7 @@ class Panel:
         if changed:
             self._share_online = share
             self._save_display_settings(online_share_for=self._online_pref_key() if share else None)
-            self.online.set_interest(share, True)
+            self.online.set_interest(share, True, watch=True)
         status, names = self.online.snapshot
         if status:
             imgui.text_wrapped(status)
@@ -5998,13 +6050,8 @@ class Panel:
         start = imgui.get_cursor_pos()
         w = max(1, imgui.get_content_region_avail().x)
         button_w = min(96, w)
-        p = imgui.get_cursor_screen_pos()
-        dl, color = imgui.get_window_draw_list(), imgui.get_color_u32
-        dl.add_circle_filled(ImVec2(p.x + 6, p.y + 16), 3, color(FAINT), 12)
-        message = str(self.msg).splitlines()
-        short = self._fit_label(message[-1] if message else "", w - button_w - 34)
-        dl.add_text(ImVec2(p.x + 18, p.y + (32 - imgui.get_font_size()) / 2), color(MUTED), short)
-        imgui.set_cursor_pos_x(start.x + w - button_w)
+        self._footer_status(w - button_w - imgui.get_style().item_spacing.x)
+        imgui.set_cursor_pos(ImVec2(start.x + w - button_w, start.y))
         if self._button("Presets", button_w):
             imgui.open_popup("local-presets")
         imgui.set_next_window_size_constraints(ImVec2(min(282, w), 0), ImVec2(max(w, 1), 420))
