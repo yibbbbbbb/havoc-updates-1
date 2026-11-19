@@ -9,3 +9,12 @@
 
 /appearance.png
   ! Content-Security-Policy
+
+/desktop/stable.json
+  Cache-Control: no-store
+  Content-Type: application/json; charset=utf-8
+
+/desktop/HavocMidnight.py
+  Cache-Control: no-cache
+  Content-Type: application/octet-stream
+  Content-Disposition: attachment; filename="HavocMidnight.py"

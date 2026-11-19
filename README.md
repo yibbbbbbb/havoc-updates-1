@@ -1,20 +1,26 @@
-# Havoc Midnight release notes
+# Havoc Midnight desktop
 
-[Open the live release notes](https://havoc-midnight-preview.pages.dev/)
+[Download HavocMidnight.py](https://havoc-midnight-preview.pages.dev/desktop/HavocMidnight.py) · [Release notes](https://havoc-midnight-preview.pages.dev/)
 
-Cloudflare Pages serves the contents of `public/`. The release notes include five screen previews, full-size desktop captures and the original Midnight artwork. Every asset ships with the site.
+Save the Python file in a writable folder. On Windows, install the UI library with `py -m pip install imgui-bundle` and run `py HavocMidnight.py`. On macOS and Linux, use `python3 -m pip install imgui-bundle pygame` and `python3 HavocMidnight.py`. Use Python 3.10 or later. The desktop keeps its settings, presets, artwork and sounds in the current user's Havoc data folder.
 
-## Preview locally
+## Using the desktop
 
-Run `python -m http.server 8080 --directory public` from the project folder, then open <http://localhost:8080>. Each screen has a shareable tab. With scripts disabled, the same links jump to the corresponding articles on one page.
+Open **Home → Updates** or **Sign in → Release notes** and select **Check for updates**. When a newer release is available, **Install … and restart** downloads it, verifies it and restarts Havoc. The preceding file is saved beside the desktop as `HavocMidnight.py.previous`.
 
-## Publish from GitHub
+Open **Home → Who's online** to view the names shared by verified Havoc desktop users. **Show me online** starts sharing your verified display name. Visibility starts off. An explicit logout clears the saved choice. Normal exits send a best-effort sign-out. An interrupted connection expires after at most 100 seconds. An unreachable service shows a retry message.
 
-1. Grant Cloudflare Workers and Pages access to the `yibbbbbbb/havoc-updates-1` repository in GitHub.
-2. In **Workers & Pages → Create application → Pages → Connect to Git**, choose GitHub. If prompted, authorize Cloudflare with your `yibbbbbbb` GitHub account, then select `havoc-updates-1`.
-3. Set the production branch to `main`, the framework to **None**, and the build output directory to `public`. Leave the build command and root directory empty.
-4. Select **Save and Deploy**. Use the Pages address assigned by Cloudflare. Each subsequent push to `main` redeploys the site.
+## Publishing a desktop release
 
-Change the release copy, date and image descriptions in `public/index.html`. Preserve the section IDs to keep links to existing notes working. Cloudflare applies the security headers in `public/_headers`.
+1. Advance the three-part `DESKTOP_RELEASE` in the maintained desktop source, build it and test it. Commit the finished standalone file at `public/desktop/HavocMidnight.py` to this repository.
+2. From this checkout, run `python service/publish_manifest.py <full-artifact-commit-id>`. It checks the committed bytes against the local file and writes `public/desktop/stable.json`. Commit that file to `main`.
+3. Deploy the contents of `public/` to the existing Cloudflare Pages project **havoc-midnight-preview**. Include the Pages advanced-mode Worker, routes and headers. The desktop trusts the production hostname, so deployments to a preview alias do not promote a release.
+4. Check the update button from an older copy. The installed version, SHA-256 digest, byte size and immutable Git revision must agree across the two release channels before installation. Keep the GitHub repository and Cloudflare production deployment restricted to trusted publishers.
 
-[Cloudflare Pages Git integration](https://developers.cloudflare.com/pages/get-started/git-integration/)
+## Online service
+
+The Pages Worker serves `/api/presence/*`. It uses the `PRESENCE` D1 binding. For an approved deployment, apply `service/presence.sql` to the presence database, bind it as `PRESENCE` in the Pages production settings and redeploy. The API returns HTTP 503 while the binding is absent.
+
+The Worker verifies the same machine identity used for Havoc sign-in. It never stores raw machine IDs or IP addresses in the presence database. It keeps a keyed member identifier to count multiple desktop windows once, a hash of the temporary bearer token, the verified display name and expiration times. The roster exposes only display names and temporary row IDs to verified clients. Sessions expire after 15 minutes, expired rows are discarded on the next verified session creation, and logout deletes that session. Machine verification data and bearer tokens belong exclusively in HTTPS request bodies or headers.
+
+Run `node --test service/presence.test.mjs` with Node 24 or later for the service tests. To preview the static pages locally, run `python -m http.server 8080 --directory public` and open <http://localhost:8080>.
