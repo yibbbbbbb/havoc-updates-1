@@ -1,5 +1,7 @@
 # Havoc Midnight release notes
 
+[Open the live release notes](https://havoc-midnight-preview.pages.dev/)
+
 Cloudflare Pages serves the contents of `public/`. The release notes include five screen previews, full-size desktop captures and the original Midnight artwork. Every asset ships with the site.
 
 ## Preview locally
@@ -9,7 +11,7 @@ Run `python -m http.server 8080 --directory public` from the project folder, the
 ## Publish from GitHub
 
 1. Grant Cloudflare Workers and Pages access to the `yibbbbbbb/havoc-updates-1` repository in GitHub.
-2. In **Workers & Pages → Create application → Pages → Connect to Git**, select the repository.
+2. In **Workers & Pages → Create application → Pages → Connect to Git**, choose GitHub. If prompted, authorize Cloudflare with your `yibbbbbbb` GitHub account, then select `havoc-updates-1`.
 3. Set the production branch to `main`, the framework to **None**, and the build output directory to `public`. Leave the build command and root directory empty.
 4. Select **Save and Deploy**. Use the Pages address assigned by Cloudflare. Each subsequent push to `main` redeploys the site.
 
